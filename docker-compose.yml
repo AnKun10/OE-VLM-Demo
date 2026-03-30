@@ -69,6 +69,15 @@ services:
       timeout: 20s
       retries: 3
 
+  attu:
+    container_name: oe_vlm_attu
+    image: zilliz/attu:latest
+    ports:
+      - "8001:3000"
+    environment:
+      MILVUS_URL: milvus:19530
+    depends_on:
+      - milvus
 volumes:
   mongo_data:
   etcd_data:

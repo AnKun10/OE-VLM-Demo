@@ -1,6 +1,7 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymilvus import connections, Collection, CollectionSchema, FieldSchema, DataType, utility
 from app.config import settings
+from app.services.clip_service import get_vector_size
 
 # MongoDB
 mongo_client: AsyncIOMotorClient = None
@@ -11,10 +12,6 @@ async def connect_mongodb():
     global mongo_client, mongo_db
     mongo_client = AsyncIOMotorClient(settings.mongodb_url)
     mongo_db = mongo_client[settings.mongodb_db]
-    # Create indexes
-    await mongo_db.products.create_index("brand")
-    await mongo_db.products.create_index("category")
-    await mongo_db.products.create_index([("name", "text"), ("description", "text"), ("tags", "text")])
     print("Connected to MongoDB")
 
 
@@ -55,14 +52,17 @@ def _ensure_collection():
     if utility.has_collection(collection_name):
         return
 
+    vector_size = get_vector_size()
+
     fields = [
         FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=64),
-        FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=384),
+        FieldSchema(name="store", dtype=DataType.VARCHAR, max_length=128),
+        FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=vector_size),
     ]
     schema = CollectionSchema(fields=fields, description="Product embeddings")
     collection = Collection(name=collection_name, schema=schema)
     collection.create_index(
-        field_name="embedding",
+        field_name="vector",
         index_params={"metric_type": "COSINE", "index_type": "IVF_FLAT", "params": {"nlist": 128}},
     )
     print(f"Created Milvus collection: {collection_name}")

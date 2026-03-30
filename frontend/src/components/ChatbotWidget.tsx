@@ -21,7 +21,7 @@ interface Message {
 
 interface ChatResponse {
   reply: string;
-  products?: { id: string; name: string; price: number }[];
+  products?: { id: string; name: string; image_url?: string | null }[];
 }
 
 async function sendChatMessage(

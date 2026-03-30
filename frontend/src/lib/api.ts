@@ -6,10 +6,8 @@ export interface ProductsParams {
   page?: number;
   page_size?: number;
   search?: string;
-  brands?: string[];
+  stores?: string[];
   categories?: string[];
-  min_price?: number;
-  max_price?: number;
   sort_by?: string;
   sort_order?: string;
   semantic?: boolean;
