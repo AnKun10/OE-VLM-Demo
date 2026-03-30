@@ -17,11 +17,11 @@ export default function Footer() {
             </p>
           </div>
           <div>
-            <h3 className="font-semibold text-white mb-3">Thương Hiệu</h3>
+            <h3 className="font-semibold text-white mb-3">Cửa Hàng</h3>
             <ul className="space-y-2 text-sm">
-              {["HOKA", "Nike", "Adidas", "Puma", "Brooks", "ASICS", "New Balance"].map((b) => (
-                <li key={b}>
-                  <Link to={`/products?brands=${b}`} className="hover:text-white transition-colors">{b}</Link>
+              {["AnStore", "ThanhStore", "TuanAnhStore"].map((store) => (
+                <li key={store}>
+                  <Link to={`/products?stores=${store}`} className="hover:text-white transition-colors">{store}</Link>
                 </li>
               ))}
             </ul>
@@ -31,8 +31,8 @@ export default function Footer() {
             <ul className="space-y-2 text-sm">
               <li><Link to="/products?categories=Road+Running" className="hover:text-white transition-colors">Road Running</Link></li>
               <li><Link to="/products?categories=Trail+Running" className="hover:text-white transition-colors">Trail Running</Link></li>
-              <li><Link to="/products?sort_by=discount" className="hover:text-white transition-colors">Khuyến Mãi</Link></li>
-              <li><Link to="/products?is_new=true" className="hover:text-white transition-colors">Hàng Mới</Link></li>
+              <li><Link to="/products?stores=AnStore" className="hover:text-white transition-colors">AnStore</Link></li>
+              <li><Link to="/products?stores=ThanhStore" className="hover:text-white transition-colors">ThanhStore</Link></li>
             </ul>
           </div>
           <div>

@@ -21,17 +21,12 @@ class ChatRequest(BaseModel):
 class ChatProductRef(BaseModel):
     id: str
     name: str
-    price: float
+    image_url: str | None = None
 
 
 class ChatResponse(BaseModel):
     reply: str
     products: list[ChatProductRef] = []
-
-
-def _format_price(price: float) -> str:
-    return f"{int(price):,}đ".replace(",", ".")
-
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
@@ -43,8 +38,12 @@ async def chat(request: ChatRequest, db: AsyncIOMotorDatabase = Depends(get_db))
         ids = search_similar_products(message, top_k=3)
         if ids:
             valid_ids = [ObjectId(i) for i in ids if ObjectId.is_valid(i)]
-            cursor = db.products.find({"_id": {"$in": valid_ids}})
-            async for doc in cursor:
+            docs = await db.products.find({"_id": {"$in": valid_ids}}).to_list(length=len(valid_ids))
+            doc_map = {str(doc["_id"]): doc for doc in docs}
+            for product_id in ids:
+                doc = doc_map.get(product_id)
+                if not doc:
+                    continue
                 doc["id"] = str(doc.pop("_id"))
                 found_products.append(doc)
     except Exception:
@@ -65,14 +64,11 @@ async def chat(request: ChatRequest, db: AsyncIOMotorDatabase = Depends(get_db))
         lines = ["Dựa trên yêu cầu của bạn, tôi gợi ý những sản phẩm sau:\n"]
         refs = []
         for p in found_products:
-            price = p.get("price", 0)
-            orig = p.get("original_price")
-            price_str = _format_price(price)
-            if orig and orig > price:
-                discount = round((1 - price / orig) * 100)
-                price_str = f"{price_str} (giảm {discount}%)"
-            lines.append(f"• **{p['name']}** – {price_str}")
-            refs.append(ChatProductRef(id=p["id"], name=p["name"], price=price))
+            store = p.get("store", "")
+            category = p.get("category", "")
+            meta = " - ".join(part for part in [store, category] if part)
+            lines.append(f"• **{p['name']}**{f' - {meta}' if meta else ''}")
+            refs.append(ChatProductRef(id=p["id"], name=p["name"], image_url=p.get("image_url")))
 
         lines.append(
             "\nBạn có muốn biết thêm chi tiết về sản phẩm nào không?"
@@ -84,8 +80,7 @@ async def chat(request: ChatRequest, db: AsyncIOMotorDatabase = Depends(get_db))
     lower = message.lower()
     if any(w in lower for w in ["giá", "rẻ", "khuyến mãi", "giảm"]):
         reply = (
-            "Hiện tại chúng tôi đang có nhiều ưu đãi hấp dẫn! "
-            "Bạn có thể vào trang Sản phẩm và lọc theo mức giá để tìm đôi giày phù hợp với ngân sách của mình."
+            "Bạn có thể vào trang Sản phẩm và lọc theo cửa hàng hoặc danh mục để tìm sản phẩm phù hợp."
         )
     elif any(w in lower for w in ["trail", "địa hình", "núi", "đường mòn"]):
         reply = (

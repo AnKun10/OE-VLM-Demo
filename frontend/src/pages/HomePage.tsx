@@ -7,14 +7,10 @@ import ProductCard from "@/components/ProductCard";
 import { api } from "@/lib/api";
 import type { Product } from "@/types";
 
-const BRANDS = [
-  { name: "HOKA", color: "bg-orange-100 text-orange-700 hover:bg-orange-200" },
-  { name: "NIKE", color: "bg-gray-100 text-gray-700 hover:bg-gray-200" },
-  { name: "ADIDAS", color: "bg-blue-100 text-blue-700 hover:bg-blue-200" },
-  { name: "PUMA", color: "bg-red-100 text-red-700 hover:bg-red-200" },
-  { name: "BROOKS", color: "bg-purple-100 text-purple-700 hover:bg-purple-200" },
-  { name: "ASICS", color: "bg-teal-100 text-teal-700 hover:bg-teal-200" },
-  { name: "NEW BALANCE", color: "bg-indigo-100 text-indigo-700 hover:bg-indigo-200" },
+const STORES = [
+  { name: "AnStore", color: "bg-orange-100 text-orange-700 hover:bg-orange-200" },
+  { name: "ThanhStore", color: "bg-blue-100 text-blue-700 hover:bg-blue-200" },
+  { name: "TuanAnhStore", color: "bg-teal-100 text-teal-700 hover:bg-teal-200" },
 ];
 
 const FEATURES = [
@@ -35,11 +31,11 @@ export default function HomePage() {
     async function load() {
       try {
         const [featuredRes, newRes] = await Promise.all([
-          api.getProducts({ page: 1, page_size: 8, sort_by: "rating", sort_order: "desc" }),
+          api.getProducts({ page: 1, page_size: 8, sort_by: "created", sort_order: "desc" }),
           api.getProducts({ page: 1, page_size: 4, sort_by: "created", sort_order: "desc" }),
         ]);
         setFeatured(featuredRes.items);
-        setNewArrivals(newRes.items.filter((p) => p.is_new).slice(0, 4));
+        setNewArrivals(newRes.items.slice(0, 4));
       } catch {
         // API might not be running yet
       } finally {
@@ -75,7 +71,7 @@ export default function HomePage() {
               <span className="text-blue-400">Chính Hãng</span> Hàng Đầu
             </h1>
             <p className="text-gray-300 text-lg mb-8">
-              Khám phá bộ sưu tập giày chạy bộ từ các thương hiệu hàng đầu thế giới. HOKA, Nike, Adidas và nhiều hơn nữa.
+              Khám phá danh mục thời trang từ các cửa hàng nổi bật, tìm nhanh theo mô tả, cửa hàng hoặc danh mục.
             </p>
             <form onSubmit={handleSearch} className="flex gap-2 max-w-md mx-auto mb-8">
               <div className="relative flex-1">
@@ -94,7 +90,7 @@ export default function HomePage() {
                 <Link to="/products">Xem Tất Cả Sản Phẩm</Link>
               </Button>
               <Button asChild variant="outline" size="lg" className="border-white/30 text-white bg-white/10 hover:bg-white/20">
-                <Link to="/products?sort_by=discount&sort_order=desc">Xem Khuyến Mãi</Link>
+                <Link to="/products?stores=AnStore">Xem AnStore</Link>
               </Button>
             </div>
           </div>
@@ -118,15 +114,15 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Brands */}
+      {/* Stores */}
       <section className="bg-gray-50 py-10">
         <div className="container mx-auto px-4">
-          <h2 className="text-center text-sm font-semibold text-gray-400 uppercase tracking-widest mb-6">Thương Hiệu</h2>
+          <h2 className="text-center text-sm font-semibold text-gray-400 uppercase tracking-widest mb-6">Cửa Hàng</h2>
           <div className="flex flex-wrap gap-3 justify-center">
-            {BRANDS.map(({ name, color }) => (
+            {STORES.map(({ name, color }) => (
               <Link
                 key={name}
-                to={`/products?brands=${encodeURIComponent(name)}`}
+                to={`/products?stores=${encodeURIComponent(name)}`}
                 className={`px-5 py-2 rounded-full text-sm font-semibold transition-colors ${color}`}
               >
                 {name}
@@ -164,7 +160,7 @@ export default function HomePage() {
           <div className="flex items-center justify-between mb-8">
             <div>
               <h2 className="text-2xl font-bold text-gray-900">Sản Phẩm Nổi Bật</h2>
-              <p className="text-gray-500 text-sm mt-1">Được đánh giá cao bởi cộng đồng chạy bộ</p>
+              <p className="text-gray-500 text-sm mt-1">Những sản phẩm mới nhất trong bộ sưu tập.</p>
             </div>
             <Button asChild variant="ghost" className="text-blue-600 hover:text-blue-700">
               <Link to="/products" className="flex items-center gap-1">
