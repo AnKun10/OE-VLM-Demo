@@ -52,38 +52,6 @@ def resolve_image(url: str) -> Image.Image | None:
     return None
 
 
-def _build_fallback_reply(message: str) -> str:
-    """Original hardcoded responses as fallback when VLM is not available."""
-    lower = message.lower()
-    if any(w in lower for w in ["giá", "rẻ", "khuyến mãi", "giảm"]):
-        return "Bạn có thể vào trang Sản phẩm và lọc theo cửa hàng hoặc danh mục để tìm sản phẩm phù hợp."
-    if any(w in lower for w in ["trail", "địa hình", "núi", "đường mòn"]):
-        return (
-            "Giày trail running phù hợp cho địa hình phức tạp với đế bám tốt. "
-            "HOKA Speedgoat và Salomon Speedcross là những lựa chọn phổ biến. "
-            "Bạn có muốn tôi tìm kiếm thêm không?"
-        )
-    if any(w in lower for w in ["road", "đường nhựa", "asphalt", "marathon"]):
-        return (
-            "Giày road running được thiết kế cho mặt đường phẳng với đệm tốt. "
-            "Adidas, Nike và Puma đều có nhiều mẫu xuất sắc. "
-            "Hãy cho tôi biết thêm yêu cầu của bạn!"
-        )
-    if any(w in lower for w in ["size", "cỡ", "số"]):
-        return (
-            "Chúng tôi có sẵn các size từ 36 đến 47 tùy theo dòng sản phẩm. "
-            "Thông thường nên chọn size lớn hơn 0.5 so với giày thường ngày khi mua giày chạy bộ."
-        )
-    return (
-        "Xin chào! Tôi có thể giúp bạn:\n"
-        "• Tìm giày chạy bộ phù hợp\n"
-        "• So sánh các dòng sản phẩm\n"
-        "• Tư vấn về size và fit\n"
-        "• Thông tin khuyến mãi\n\n"
-        "Bạn đang tìm kiếm loại giày nào?"
-    )
-
-
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
     message = request.message.strip()
@@ -125,17 +93,7 @@ async def chat(request: ChatRequest, db: AsyncIOMotorDatabase = Depends(get_db))
 
     # --- VLM response generation ---
     if not vlm_service.is_loaded():
-        # Fallback: hardcoded responses + product list
-        if found_products:
-            lines = ["Dựa trên yêu cầu của bạn, tôi gợi ý những sản phẩm sau:\n"]
-            for p in found_products:
-                store = p.get("store", "")
-                category = p.get("category", "")
-                meta = " - ".join(part for part in [store, category] if part)
-                lines.append(f"• **{p['name']}**{f' - {meta}' if meta else ''}")
-            lines.append("\nBạn có muốn biết thêm chi tiết về sản phẩm nào không?")
-            return ChatResponse(reply="\n".join(lines), products=refs)
-        return ChatResponse(reply=_build_fallback_reply(message))
+        return ChatResponse(reply="❌ Chatbot is currently unavailable!")
 
     # Build VLM prompt
     system_context = (
@@ -169,12 +127,6 @@ async def chat(request: ChatRequest, db: AsyncIOMotorDatabase = Depends(get_db))
         reply = vlm_service.generate_response(prompt, image=image)
     except Exception as exc:
         print(f"VLM generation error: {exc}")
-        if found_products:
-            lines = ["Dựa trên yêu cầu của bạn, tôi gợi ý những sản phẩm sau:\n"]
-            for p in found_products:
-                lines.append(f"• **{p['name']}**")
-            reply = "\n".join(lines)
-        else:
-            reply = _build_fallback_reply(message)
+        return ChatResponse(reply="❌ Fail to response")
 
     return ChatResponse(reply=reply, products=refs)

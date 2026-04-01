@@ -78,6 +78,33 @@ services:
       MILVUS_URL: milvus:19530
     depends_on:
       - milvus
+
+  backend:
+    container_name: oe_vlm_backend
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      MONGODB_DB: oe_vlm_shop
+      MILVUS_HOST: milvus
+      MILVUS_PORT: 19530
+      MILVUS_COLLECTION: products
+      EMBEDDING_MODEL: all-MiniLM-L6-v2
+    depends_on:
+      - mongodb
+      - milvus
+    restart: unless-stopped
+
+  frontend:
+    container_name: oe_vlm_frontend
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
 volumes:
   mongo_data:
   etcd_data:
