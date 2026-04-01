@@ -26,12 +26,13 @@ interface ChatResponse {
 
 async function sendChatMessage(
   message: string,
-  history: { role: string; content: string }[]
+  history: { role: string; content: string }[],
+  imageUrls: string[] = []
 ): Promise<ChatResponse> {
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history }),
+    body: JSON.stringify({ message, history, image_urls: imageUrls }),
   });
   if (!res.ok) throw new Error("Chat request failed");
   return res.json();
@@ -65,6 +66,7 @@ export default function ChatbotWidget() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -111,7 +113,8 @@ export default function ChatbotWidget() {
 
     try {
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
-      const data = await sendChatMessage(content, history);
+      const imageUrls = userMessage.images?.map((img) => img.url) ?? [];
+      const data = await sendChatMessage(content, history, imageUrls);
       setMessages((prev) => [
         ...prev,
         { id: (Date.now() + 1).toString(), role: "assistant", content: data.reply, timestamp: new Date() },
@@ -135,6 +138,18 @@ export default function ChatbotWidget() {
 
   function removeAttachment(imageUrl: string) {
     setAttachments((prev) => prev.filter((a) => a.imageUrl !== imageUrl));
+  }
+
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setAttachments((prev) => [...prev, { imageUrl: dataUrl, productName: file.name }]);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
   }
 
   const canSend = (input.trim().length > 0 || attachments.length > 0) && !loading;
@@ -329,7 +344,8 @@ export default function ChatbotWidget() {
               {/* Action row */}
               <div className="flex items-center justify-between mt-2 px-1">
                 <div className="flex items-center gap-3">
-                  <button className="flex items-center justify-center transition-opacity hover:opacity-70" style={{ color: "#434343" }} tabIndex={-1} type="button">
+                  <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
+                  <button className="flex items-center justify-center transition-opacity hover:opacity-70" style={{ color: "#434343" }} tabIndex={-1} type="button" onClick={() => fileInputRef.current?.click()}>
                     <Plus size={22} strokeWidth={1.8} />
                   </button>
                   <button className="flex items-center gap-1.5 transition-opacity hover:opacity-70" style={{ color: "#434343" }} tabIndex={-1} type="button">

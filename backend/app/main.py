@@ -5,16 +5,19 @@ from fastapi.staticfiles import StaticFiles
 from app.database import connect_mongodb, disconnect_mongodb, connect_milvus, disconnect_milvus
 from app.routers import products, chat
 from app.services.clip_service import load_clip_model, unload_clip_model
+from app.services.vlm_service import load_vlm_model, unload_vlm_model
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_mongodb()
     load_clip_model()
+    load_vlm_model()
     connect_milvus()
     yield
     await disconnect_mongodb()
     disconnect_milvus()
+    unload_vlm_model()
     unload_clip_model()
 
 

@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     milvus_collection: str = "products"
     clip_model_name: str = "ViT-B-32"
     clip_pretrained: str = "laion2b_s34b_b79k"
+    vlm_model_name: str = "llava-hf/llava-1.5-7b-hf"
+    vlm_device: str = "auto"
 
     class Config:
         env_file = ".env"

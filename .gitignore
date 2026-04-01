@@ -42,3 +42,7 @@ etcd_data/
 
 # Logs
 *.log
+
+# Claude Code
+.claude/
+CLAUDE.md
