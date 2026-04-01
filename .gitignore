@@ -46,3 +46,4 @@ etcd_data/
 # Claude Code
 .claude/
 CLAUDE.md
+.playwright-mcp/
