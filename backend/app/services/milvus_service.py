@@ -50,7 +50,8 @@ def search_similar_products(
         "anns_field": "vector",
         "limit": top_k,
         "output_fields": ["store", "layer"],
-        "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
+        ## "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
+        "param": {"params": {"ef": 200}},
     }
     expr = build_scalar_filter(stores=stores, layers=layers)
     if expr:
