@@ -7,8 +7,7 @@ class Settings(BaseSettings):
     milvus_host: str = "localhost"
     milvus_port: int = 19530
     milvus_collection: str = "products"
-    clip_model_name: str = "ViT-B-32"
-    clip_pretrained: str = "laion2b_s34b_b79k"
+    metaclip_model_id: str = "facebook/metaclip-2-mt5-worldwide-b32"
 
     class Config:
         env_file = ".env"
