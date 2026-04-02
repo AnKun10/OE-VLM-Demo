@@ -1,8 +1,8 @@
 from typing import Optional
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.models.product import ProductCreate, ProductResponse, ProductListResponse, FilterOptions
-from app.services.milvus_service import upsert_product_embedding, search_similar_products
+from app.models.product import ProductResponse, ProductListResponse, FilterOptions
+from app.services.milvus_service import search_similar_products
 
 DEFAULT_STORES = ["AnStore", "ThanhStore", "TuanAnhStore"]
 
@@ -32,21 +32,6 @@ async def _fetch_products_by_ids(
     doc_map = {str(doc["_id"]): doc for doc in docs}
     return [doc_map[product_id] for product_id in ids if product_id in doc_map]
 
-
-async def create_product(db: AsyncIOMotorDatabase, product: ProductCreate) -> ProductResponse:
-    doc = product.model_dump()
-    result = await db.products.insert_one(doc)
-    created = await db.products.find_one({"_id": result.inserted_id})
-    response = _serialize(created)
-    text = f"{product.name} {product.store} {product.category} {product.description}"
-    upsert_product_embedding(
-        response.id,
-        text,
-        store=product.store,
-    )
-    return response
-
-
 async def get_products(
     db: AsyncIOMotorDatabase,
     page: int = 1,
@@ -62,20 +47,21 @@ async def get_products(
     query: dict = {}
 
     if search:
+        # TODO: add cache/Redis to save query+ids.
         ids = search_similar_products(
             search,
             top_k=100,
             stores=stores,
         )
+        skip = (page - 1) * page_size
         ordered_docs = await _fetch_products_by_ids(
             db,
-            ids,
+            ids[skip : skip + page_size],
             stores=stores,
             categories=categories,
         )
-        total = len(ordered_docs)
-        skip = (page - 1) * page_size
-        paged_docs = ordered_docs[skip : skip + page_size]
+        total = len(ids) # Is top-k: 100
+        paged_docs = ordered_docs
         items = [_serialize(doc) for doc in paged_docs]
         return ProductListResponse(
             items=items,

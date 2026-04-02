@@ -1,7 +1,6 @@
 from app.database import get_milvus_collection
 from app.services.clip_service import embed_text
 
-
 def _escape_milvus_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -40,9 +39,9 @@ def search_similar_products(
     search_kwargs = {
         "data": [query_embedding],
         "anns_field": "vector",
-        "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
         "limit": top_k,
         "output_fields": ["store"],
+        "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
     }
     expr = build_scalar_filter(stores=stores)
     if expr:
