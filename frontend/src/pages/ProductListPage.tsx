@@ -34,6 +34,7 @@ export default function ProductListPage() {
   const sortValue = searchParams.get("sort") || "created_desc";
   const selectedStore = searchParams.get("stores") || DEFAULT_STORE;
   const selectedCategories = searchParams.getAll("categories");
+  const selectedLayers = searchParams.getAll("layers");
 
   // Local search input
   const [searchInput, setSearchInput] = useState(search);
@@ -73,6 +74,7 @@ export default function ProductListPage() {
         page_size: 12,
         search: search || undefined,
         stores: [selectedStore],
+        layers: selectedLayers.length ? selectedLayers : undefined,
         categories: selectedCategories.length ? selectedCategories : undefined,
         sort_by,
         sort_order,
@@ -104,12 +106,20 @@ export default function ProductListPage() {
     updateParams({ categories: next });
   }
 
+  function toggleLayer(layer: string) {
+    const next = selectedLayers.includes(layer)
+      ? selectedLayers.filter((value) => value !== layer)
+      : [...selectedLayers, layer];
+    updateParams({ layers: next });
+  }
+
   function clearAllFilters() {
     setSearchParams({ page: "1", stores: DEFAULT_STORE });
   }
 
   const hasActiveFilters =
     selectedCategories.length > 0 ||
+    selectedLayers.length > 0 ||
     selectedStore !== DEFAULT_STORE;
 
   const FilterPanel = () => (
@@ -133,6 +143,26 @@ export default function ProductListPage() {
                   onCheckedChange={() => selectStore(store)}
                 />
                 <span className="text-sm text-[#444956] group-hover:text-[#0d1b67]">{store}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Separator />
+
+      {/* Layers */}
+      {filterOptions && (
+        <div>
+          <h3 className="text-xs font-semibold text-[#0c1638] uppercase tracking-[0.06em] mb-3">Layer</h3>
+          <div className="space-y-2">
+            {filterOptions.layers.map((layer) => (
+              <label key={layer} className="flex items-center gap-2 cursor-pointer group">
+                <Checkbox
+                  checked={selectedLayers.includes(layer)}
+                  onCheckedChange={() => toggleLayer(layer)}
+                />
+                <span className="text-sm text-[#444956] group-hover:text-[#0d1b67]">{layer}</span>
               </label>
             ))}
           </div>
@@ -214,7 +244,7 @@ export default function ProductListPage() {
               Lọc
               {hasActiveFilters && (
                 <span className="bg-[#0d1b67] text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
-                  {(selectedStore !== DEFAULT_STORE ? 1 : 0) + selectedCategories.length}
+                  (selectedStore !== DEFAULT_STORE ? 1 : 0) + selectedCategories.length + selectedLayers.length
                 </span>
               )}
             </Button>
@@ -245,6 +275,12 @@ export default function ProductListPage() {
                 <button onClick={() => selectStore(DEFAULT_STORE)}><X className="h-3 w-3" /></button>
               </span>
             )}
+            {selectedLayers.map((layer) => (
+              <span key={layer} className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-xs px-3 py-1 rounded-full border border-emerald-200">
+                {layer}
+                <button onClick={() => toggleLayer(layer)}><X className="h-3 w-3" /></button>
+              </span>
+            ))}
             {selectedCategories.map((c) => (
               <span key={c} className="inline-flex items-center gap-1 bg-green-50 text-green-700 text-xs px-3 py-1 rounded-full border border-green-200">
                 {c}

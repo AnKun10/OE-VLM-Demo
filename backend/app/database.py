@@ -57,6 +57,7 @@ def _ensure_collection():
     fields = [
         FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=64),
         FieldSchema(name="store", dtype=DataType.VARCHAR, max_length=128),
+        FieldSchema(name="layer", dtype=DataType.VARCHAR, max_length=128),
         FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=vector_size),
     ]
     schema = CollectionSchema(fields=fields, description="Product embeddings")

@@ -32,6 +32,7 @@ async def seed():
                 product_id,
                 text,
                 store=product["store"],
+                layer=product.get("layer"),
             )
         except Exception as e:
             print(f"  Milvus warning for {product['name']}: {e}")

@@ -19,6 +19,7 @@ class ProductCreate(BaseModel):
     name: str
     image_url: str
     store: str
+    layer: str
     category: str
     description: str
 
@@ -28,6 +29,7 @@ class ProductResponse(BaseModel):
     name: str
     image_url: str
     store: str
+    layer: str
     category: str
     description: str
 
@@ -46,3 +48,4 @@ class ProductListResponse(BaseModel):
 class FilterOptions(BaseModel):
     stores: list[str]
     categories: list[str]
+    layers: list[str]

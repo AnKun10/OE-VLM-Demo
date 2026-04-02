@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { Heart, MessageCircle } from "lucide-react";
 import type { Product } from "@/types";
 import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
 
 interface ProductCardProps {
   product: Product;
@@ -55,10 +56,24 @@ export default function ProductCard({ product }: ProductCardProps) {
         </div>
 
         {/* Info */}
-        <div className="p-3 pt-[13px]">
-          <h3 className="text-[15px] font-semibold text-[#444956] mt-1.5 line-clamp-2 leading-[1.42] tracking-[-0.01em] group-hover:text-[#0d1b67] transition-colors">
-            {product.name}
-          </h3>
+        <div className="p-3 pt-[13px] space-y-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="min-w-0 text-[15px] font-semibold text-[#444956] line-clamp-2 leading-[1.42] tracking-[-0.01em] group-hover:text-[#0d1b67] transition-colors">
+              {product.name}
+            </h3>
+            <span className="shrink-0 max-w-[42%] truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8b90a0]">
+              #{product.id.slice(-5)}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between gap-2">
+            <Badge variant="outline" className="max-w-[48%] truncate border-[#0d1b67]/15 bg-[#f4f7ff] text-[#0d1b67]">
+              {product.store}
+            </Badge>
+            <Badge variant="outline" className="max-w-[48%] truncate border-[#2f6f55]/15 bg-[#edf8f2] text-[#2f6f55]">
+              {product.layer}
+            </Badge>
+          </div>
         </div>
       </div>
     </Link>
