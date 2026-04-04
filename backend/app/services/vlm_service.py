@@ -46,24 +46,31 @@ def generate_response(
     image: Image.Image | None = None,
     max_new_tokens: int = 256,
 ) -> str:
+    """Generate a response from the VLM.
+
+    ``prompt`` must already be formatted in LLaVA conversation style
+    (including USER:/ASSISTANT: markers and <image> token if needed).
+    """
     if _llm is None or _sampling_params is None:
         raise RuntimeError("VLM model is not loaded")
 
     from vllm import SamplingParams
 
-    params = SamplingParams(max_tokens=max_new_tokens, temperature=0)
+    params = SamplingParams(
+        max_tokens=max_new_tokens,
+        temperature=0,
+        stop=["USER:", "</s>"],
+    )
 
     if image is not None:
-        conversation = f"USER: <image>\n{prompt}\nASSISTANT:"
         outputs = _llm.generate(
             {
-                "prompt": conversation,
+                "prompt": prompt,
                 "multi_modal_data": {"image": image},
             },
             sampling_params=params,
         )
     else:
-        conversation = f"USER: {prompt}\nASSISTANT:"
-        outputs = _llm.generate(conversation, sampling_params=params)
+        outputs = _llm.generate(prompt, sampling_params=params)
 
     return outputs[0].outputs[0].text.strip()

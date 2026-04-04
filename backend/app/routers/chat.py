@@ -48,27 +48,38 @@ async def chat(request: ChatRequest):
     if not vlm_service.is_loaded():
         return ChatResponse(reply="Chatbot is currently unavailable!")
 
-    # Build VLM prompt
-    system_context = (
-        "Ban la tro ly mua sam cua RunShop, cua hang giay chay bo. "
-        "Tra loi bang tieng Viet, ngan gon va huu ich."
-    )
-
-    # Include recent history (last 4 turns max to keep prompt short)
-    history_lines = []
-    for msg in request.history[-4:]:
-        role = "USER" if msg.role == "user" else "ASSISTANT"
-        history_lines.append(f"{role}: {msg.content}")
-
-    prompt_parts = [system_context] + history_lines + [message]
-    prompt = "\n".join(prompt_parts)
-
     # Resolve image (use first one if provided)
     image = None
     for url in request.image_urls:
         image = resolve_image(url)
         if image is not None:
             break
+
+    # Build VLM prompt in LLaVA conversation format
+    system_context = (
+        "Ban la tro ly mua sam cua RunShop, cua hang giay chay bo. "
+        "Tra loi bang tieng Viet, ngan gon va huu ich."
+    )
+
+    # <image> token goes in the first USER turn when an image is present
+    first_prefix = f"<image>\n{system_context}" if image is not None else system_context
+
+    parts: list[str] = []
+    first_turn = True
+    for msg in request.history[-4:]:
+        if msg.role == "user":
+            prefix = first_prefix if first_turn else ""
+            first_turn = False
+            parts.append(f"USER: {prefix}\n{msg.content}" if prefix else f"USER: {msg.content}")
+        else:
+            parts.append(f"ASSISTANT: {msg.content}</s>")
+
+    # Current user message
+    prefix = first_prefix if first_turn else ""
+    parts.append(f"USER: {prefix}\n{message}" if prefix else f"USER: {message}")
+    parts.append("ASSISTANT:")
+
+    prompt = "\n".join(parts)
 
     try:
         reply = vlm_service.generate_response(prompt, image=image)
