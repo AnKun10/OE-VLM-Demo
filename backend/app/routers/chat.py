@@ -55,34 +55,31 @@ async def chat(request: ChatRequest):
         if image is not None:
             break
 
-    # Build VLM prompt in LLaVA conversation format
+    # Build OpenAI-style messages for vLLM chat API
     system_context = (
         "Ban la tro ly mua sam cua RunShop, cua hang giay chay bo. "
         "Tra loi bang tieng Viet, ngan gon va huu ich."
     )
 
-    # <image> token goes in the first USER turn when an image is present
-    first_prefix = f"<image>\n{system_context}" if image is not None else system_context
+    messages: list[dict] = [{"role": "system", "content": system_context}]
 
-    parts: list[str] = []
-    first_turn = True
+    # Add conversation history (last 4 messages)
     for msg in request.history[-4:]:
-        if msg.role == "user":
-            prefix = first_prefix if first_turn else ""
-            first_turn = False
-            parts.append(f"USER: {prefix}\n{msg.content}" if prefix else f"USER: {msg.content}")
-        else:
-            parts.append(f"ASSISTANT: {msg.content}</s>")
+        messages.append({"role": msg.role, "content": msg.content})
 
-    # Current user message
-    prefix = first_prefix if first_turn else ""
-    parts.append(f"USER: {prefix}\n{message}" if prefix else f"USER: {message}")
-    parts.append("ASSISTANT:")
-
-    prompt = "\n".join(parts)
+    # Build current user message content
+    if image is not None:
+        # Multimodal: include image as a PIL object via image_url content part
+        user_content: list[dict] = [
+            {"type": "image_pil", "image_pil": image},
+            {"type": "text", "text": message},
+        ]
+        messages.append({"role": "user", "content": user_content})
+    else:
+        messages.append({"role": "user", "content": message})
 
     try:
-        reply = vlm_service.generate_response(prompt, image=image)
+        reply = vlm_service.generate_response(messages)
     except Exception as exc:
         print(f"VLM generation error: {exc}")
         return ChatResponse(reply="Fail to response!")

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from PIL import Image
-
 from app.config import settings
 
 _llm: Any | None = None
@@ -42,14 +40,14 @@ def is_loaded() -> bool:
 
 
 def generate_response(
-    prompt: str,
-    image: Image.Image | None = None,
+    messages: list[dict],
     max_new_tokens: int = 256,
 ) -> str:
-    """Generate a response from the VLM.
+    """Generate a response from the VLM using the chat API.
 
-    ``prompt`` must already be formatted in LLaVA conversation style
-    (including USER:/ASSISTANT: markers and <image> token if needed).
+    ``messages`` should be a list of OpenAI-style message dicts
+    (with ``role`` and ``content`` keys). The chat API applies the
+    correct prompt template for the loaded model automatically.
     """
     if _llm is None or _sampling_params is None:
         raise RuntimeError("VLM model is not loaded")
@@ -59,18 +57,8 @@ def generate_response(
     params = SamplingParams(
         max_tokens=max_new_tokens,
         temperature=0,
-        stop=["USER:", "</s>"],
     )
 
-    if image is not None:
-        outputs = _llm.generate(
-            {
-                "prompt": prompt,
-                "multi_modal_data": {"image": image},
-            },
-            sampling_params=params,
-        )
-    else:
-        outputs = _llm.generate(prompt, sampling_params=params)
+    outputs = _llm.chat(messages, sampling_params=params)
 
     return outputs[0].outputs[0].text.strip()
