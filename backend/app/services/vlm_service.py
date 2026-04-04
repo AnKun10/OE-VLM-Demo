@@ -24,6 +24,8 @@ def load_vlm_model() -> None:
         model=model_name,
         trust_remote_code=True,
         max_model_len=4096,
+        quantization="bitsandbytes",
+        load_format="bitsandbytes",
     )
     _sampling_params = SamplingParams(max_tokens=256, temperature=0)
     print(f"VLM loaded via vLLM: {model_name}")

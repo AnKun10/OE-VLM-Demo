@@ -34,7 +34,7 @@ export default function Navbar() {
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600">
             <Link to="/" className="hover:text-gray-900 transition-colors">Trang Chủ</Link>
             <Link to="/products" className="hover:text-gray-900 transition-colors">Sản Phẩm</Link>
-            <Link to="/products?categories=Trail+Running" className="hover:text-gray-900 transition-colors">Trail</Link>
+            <Link to="/playground" className="hover:text-gray-900 transition-colors">AI Playground</Link>
             <Link to="/products?categories=Road+Running" className="hover:text-gray-900 transition-colors">Road</Link>
           </nav>
 
@@ -81,7 +81,7 @@ export default function Navbar() {
             <nav className="flex flex-col gap-2 text-sm font-medium">
               <Link to="/" className="py-2 px-2 rounded hover:bg-gray-50" onClick={() => setMobileOpen(false)}>Trang Chủ</Link>
               <Link to="/products" className="py-2 px-2 rounded hover:bg-gray-50" onClick={() => setMobileOpen(false)}>Tất Cả Sản Phẩm</Link>
-              <Link to="/products?categories=Trail+Running" className="py-2 px-2 rounded hover:bg-gray-50" onClick={() => setMobileOpen(false)}>Trail Running</Link>
+              <Link to="/playground" className="py-2 px-2 rounded hover:bg-gray-50" onClick={() => setMobileOpen(false)}>AI Playground</Link>
               <Link to="/products?categories=Road+Running" className="py-2 px-2 rounded hover:bg-gray-50" onClick={() => setMobileOpen(false)}>Road Running</Link>
             </nav>
           </div>

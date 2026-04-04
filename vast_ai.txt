@@ -1,0 +1,1 @@
+ssh -L 5173:localhost:5173 -L 8000:localhost:8000 -p <SSH_PORT> root@<VAST_IP>
