@@ -1,10 +1,8 @@
 import base64
-import io
 from pathlib import Path
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from PIL import Image
 
 from app.services import vlm_service
 
@@ -26,18 +24,21 @@ class ChatResponse(BaseModel):
     reply: str
 
 
-def resolve_image(url: str) -> Image.Image | None:
-    """Resolve an image URL to a PIL Image. Supports local /images/ paths and base64 data URIs."""
+def resolve_image_url(url: str) -> str | None:
+    """Resolve an image source to a data URI suitable for vLLM image_url content.
+
+    Supports base64 data URIs (passed through) and local /images/ paths
+    (converted to base64 data URIs).
+    """
     if url.startswith("data:"):
-        try:
-            _, data = url.split(",", 1)
-            return Image.open(io.BytesIO(base64.b64decode(data))).convert("RGB")
-        except Exception:
-            return None
+        return url
     if url.startswith("/images/"):
         path = Path("images") / url.removeprefix("/images/")
         if path.exists():
-            return Image.open(path).convert("RGB")
+            data = base64.b64encode(path.read_bytes()).decode()
+            suffix = path.suffix.lstrip(".").lower()
+            mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp"}.get(suffix, "jpeg")
+            return f"data:image/{mime};base64,{data}"
     return None
 
 
@@ -48,11 +49,11 @@ async def chat(request: ChatRequest):
     if not vlm_service.is_loaded():
         return ChatResponse(reply="Chatbot is currently unavailable!")
 
-    # Resolve image (use first one if provided)
-    image = None
+    # Resolve image data URI (use first valid one)
+    image_data_url: str | None = None
     for url in request.image_urls:
-        image = resolve_image(url)
-        if image is not None:
+        image_data_url = resolve_image_url(url)
+        if image_data_url is not None:
             break
 
     # Build OpenAI-style messages for vLLM chat API
@@ -68,10 +69,9 @@ async def chat(request: ChatRequest):
         messages.append({"role": msg.role, "content": msg.content})
 
     # Build current user message content
-    if image is not None:
-        # Multimodal: include image as a PIL object via image_url content part
+    if image_data_url is not None:
         user_content: list[dict] = [
-            {"type": "image_pil", "image_pil": image},
+            {"type": "image_url", "image_url": {"url": image_data_url}},
             {"type": "text", "text": message},
         ]
         messages.append({"role": "user", "content": user_content})
