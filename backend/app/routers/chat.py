@@ -48,7 +48,7 @@ async def list_models(request: Request):
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: Request, body: ChatRequest):
+def chat(request: Request, body: ChatRequest):
     manager = request.app.state.vlm_manager
     message = body.message.strip()
 
@@ -78,8 +78,9 @@ async def chat(request: Request, body: ChatRequest):
 
     try:
         reply = manager.generate(body.model_id, messages)
-    except Exception as exc:
-        print(f"VLM generation error: {exc}")
-        return ChatResponse(reply="Fail to response!")
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return ChatResponse(reply="Xin lỗi, không thể xử lý yêu cầu.")
 
     return ChatResponse(reply=reply)

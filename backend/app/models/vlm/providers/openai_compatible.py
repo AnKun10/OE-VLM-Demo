@@ -25,4 +25,5 @@ class OpenAICompatibleProvider(VLMProvider):
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        return response.choices[0].message.content.strip()
+        content = response.choices[0].message.content
+        return (content or "").strip()
