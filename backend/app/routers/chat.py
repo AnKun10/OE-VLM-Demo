@@ -1,12 +1,10 @@
 import base64
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from app.services import vlm_service
-
-router = APIRouter(prefix="/api/chat", tags=["chat"])
+router = APIRouter(prefix="/api", tags=["chat"])
 
 
 class ChatMessage(BaseModel):
@@ -18,6 +16,7 @@ class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = []
     image_urls: list[str] = []
+    model_id: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -25,7 +24,7 @@ class ChatResponse(BaseModel):
 
 
 def resolve_image_url(url: str) -> str | None:
-    """Resolve an image source to a data URI suitable for vLLM image_url content.
+    """Resolve an image source to a data URI suitable for OpenAI-style image_url content.
 
     Supports base64 data URIs (passed through) and local /images/ paths
     (converted to base64 data URIs).
@@ -42,30 +41,29 @@ def resolve_image_url(url: str) -> str | None:
     return None
 
 
-@router.post("", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    message = request.message.strip()
+@router.get("/models")
+async def list_models(request: Request):
+    manager = request.app.state.vlm_manager
+    return {"models": manager.list_models()}
 
-    if not vlm_service.is_loaded():
-        return ChatResponse(reply="Chatbot is currently unavailable!")
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(request: Request, body: ChatRequest):
+    manager = request.app.state.vlm_manager
+    message = body.message.strip()
 
     # Resolve image data URI (use first valid one)
     image_data_url: str | None = None
-    for url in request.image_urls:
+    for url in body.image_urls:
         image_data_url = resolve_image_url(url)
         if image_data_url is not None:
             break
 
-    # Build OpenAI-style messages for vLLM chat API
-    system_context = (
-        "Ban la tro ly mua sam cua RunShop, cua hang giay chay bo. "
-        "Tra loi bang tieng Viet, ngan gon va huu ich."
-    )
-
-    messages: list[dict] = [{"role": "system", "content": system_context}]
+    # Build OpenAI-style messages (without system prompt — manager handles that)
+    messages: list[dict] = []
 
     # Add conversation history (last 4 messages)
-    for msg in request.history[-4:]:
+    for msg in body.history[-4:]:
         messages.append({"role": msg.role, "content": msg.content})
 
     # Build current user message content
@@ -79,7 +77,7 @@ async def chat(request: ChatRequest):
         messages.append({"role": "user", "content": message})
 
     try:
-        reply = vlm_service.generate_response(messages)
+        reply = manager.generate(body.model_id, messages)
     except Exception as exc:
         print(f"VLM generation error: {exc}")
         return ChatResponse(reply="Fail to response!")

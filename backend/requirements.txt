@@ -3,5 +3,5 @@ uvicorn[standard]
 pydantic
 pydantic-settings
 pillow
-vllm
-bitsandbytes
+openai
+pyyaml

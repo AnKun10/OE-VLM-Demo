@@ -1,16 +1,19 @@
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+
+from app.models.vlm import VLMManager
 from app.routers import chat
-from app.services.vlm_service import load_vlm_model, unload_vlm_model
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    load_vlm_model()
+    manager = VLMManager()
+    manager.load()
+    app.state.vlm_manager = manager
     yield
-    unload_vlm_model()
 
 
 app = FastAPI(
@@ -31,6 +34,7 @@ app.add_middleware(
 app.include_router(chat.router)
 
 app.mount("/images", StaticFiles(directory="images"), name="images")
+
 
 @app.get("/health")
 async def health():
