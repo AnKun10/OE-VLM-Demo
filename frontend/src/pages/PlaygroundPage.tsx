@@ -37,11 +37,17 @@ async function chatAPI(
   message: string,
   history: { role: string; content: string }[],
   imageUrls: string[] = [],
+  modelId: string = "",
 ): Promise<{ reply: string }> {
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history, image_urls: imageUrls }),
+    body: JSON.stringify({
+      message,
+      history,
+      image_urls: imageUrls,
+      model_id: modelId || undefined,
+    }),
   });
   if (!res.ok) throw new Error("Request failed");
   return res.json();
@@ -84,6 +90,19 @@ export default function PlaygroundPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const [models, setModels] = useState<{ id: string; name: string }[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
+
+  useEffect(() => {
+    fetch("/api/models")
+      .then((res) => res.json())
+      .then((data) => {
+        setModels(data.models);
+        if (data.models.length > 0) setSelectedModel(data.models[0].id);
+      })
+      .catch(() => {});
+  }, []);
 
   const active = conversations.find((c) => c.id === activeId)!;
   const messages = active.messages;
@@ -172,7 +191,7 @@ export default function PlaygroundPage() {
     try {
       const history = newMessages.map((m) => ({ role: m.role, content: m.content || "Hãy mô tả hình ảnh này." }));
       const imageUrls = userMsg.images?.map((img) => img.url) ?? [];
-      const data = await chatAPI(apiContent, history, imageUrls);
+      const data = await chatAPI(apiContent, history, imageUrls, selectedModel);
       const assistantMsg: Message = {
         id: uid(),
         role: "assistant",
@@ -301,7 +320,7 @@ export default function PlaygroundPage() {
 
         {/* Sidebar footer */}
         <div className="px-4 py-3 text-[11px] flex-shrink-0" style={{ borderTop: `1px solid ${BORDER}`, color: TEXT_MUTED }}>
-          Powered by LLaVA via vLLM
+          Powered by OE-VLM
         </div>
       </aside>
 
@@ -581,6 +600,25 @@ export default function PlaygroundPage() {
                   >
                     <Mic size={18} />
                   </button>
+                  {models.length > 0 && (
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      className="text-xs rounded-lg px-2 py-1.5 outline-none cursor-pointer transition-colors"
+                      style={{
+                        color: TEXT_SECONDARY,
+                        background: "transparent",
+                        border: `1px solid ${BORDER}`,
+                        maxWidth: 160,
+                      }}
+                    >
+                      {models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 <button
                   onClick={handleSend}
@@ -604,7 +642,7 @@ export default function PlaygroundPage() {
             </div>
 
             <p className="text-center mt-2.5 text-[11px]" style={{ color: TEXT_MUTED }}>
-              AI Playground sử dụng LLaVA-1.5-7b-hf. Kết quả có thể không chính xác.
+              AI Playground sử dụng các mô hình AI. Kết quả có thể không chính xác.
             </p>
           </div>
         </div>
