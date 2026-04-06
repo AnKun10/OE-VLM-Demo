@@ -47,3 +47,9 @@ etcd_data/
 .claude/
 CLAUDE.md
 .playwright-mcp/
+
+# Docs
+docs/
+
+# Other files
+vast_ai.txt
