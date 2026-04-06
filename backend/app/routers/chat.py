@@ -78,6 +78,9 @@ def chat(request: Request, body: ChatRequest):
 
     try:
         reply = manager.generate(body.model_id, messages)
+    except ConnectionError as exc:
+        print(f"[chat] Connection error: {exc}")
+        return ChatResponse(reply=f"Lỗi kết nối: {exc}")
     except Exception:
         import traceback
         traceback.print_exc()

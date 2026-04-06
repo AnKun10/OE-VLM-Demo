@@ -1,7 +1,7 @@
 # backend/app/models/vlm/providers/openai_compatible.py
 from __future__ import annotations
 
-from openai import OpenAI
+from openai import APIConnectionError, BadRequestError, OpenAI
 
 from .base import VLMProvider
 
@@ -19,11 +19,28 @@ class OpenAICompatibleProvider(VLMProvider):
         max_tokens: int,
         temperature: float,
     ) -> str:
-        response = self.client.chat.completions.create(
-            model=self.model_id,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_id,
+                messages=messages,
+                max_completion_tokens=max_tokens,
+                temperature=temperature,
+            )
+        except BadRequestError as exc:
+            if "max_completion_tokens" in str(exc):
+                # Older API (e.g. vLLM) doesn't support max_completion_tokens
+                response = self.client.chat.completions.create(
+                    model=self.model_id,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            else:
+                raise
+        except APIConnectionError:
+            raise ConnectionError(
+                f"Cannot connect to model '{self.model_id}' at {self.client.base_url}. "
+                "Is the model server running?"
+            )
         content = response.choices[0].message.content
         return (content or "").strip()
