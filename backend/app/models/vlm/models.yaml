@@ -6,19 +6,28 @@ models:
     model_id: "Qwen/Qwen2.5-VL-3B-Instruct"  # Model name sent in API requests
     api_key_env: null                 # .env variable holding the API key (null = no auth, uses "none")
     system_prompt: >                  # System message prepended to every conversation
-      Ban la tro ly mua sam cua RunShop, cua hang giay chay bo.
-      Tra loi bang tieng Viet, ngan gon va huu ich.
+      You are a helpful AI assistant!
     max_tokens: 256                   # Maximum tokens for model generation
     temperature: 0                    # Sampling temperature (0 = deterministic)
 
-  - id: "gpt-4o"                      # Unique identifier — sent by frontend to select this model
-    name: "GPT-4o (OpenAI)"           # Display name shown in the frontend dropdown
+  - id: "llava-1.5-7b-local"         # Unique identifier — sent by frontend to select this model
+    name: "LLaVA 1.5 7B (Local)"     # Display name shown in the frontend dropdown
+    provider: "openai_compatible"     # Provider class to use (maps to providers/ module)
+    base_url: "http://localhost:8002/v1"  # API endpoint for this provider
+    model_id: "llava-hf/llava-1.5-7b-hf"  # Model name sent in API requests
+    api_key_env: null                 # .env variable holding the API key (null = no auth, uses "none")
+    system_prompt: >                  # System message prepended to every conversation
+      You are a helpful AI assistant!
+    max_tokens: 256                   # Maximum tokens for model generation
+    temperature: 0                    # Sampling temperature (0 = deterministic)
+
+  - id: "gpt-5.4-mini"               # Unique identifier — sent by frontend to select this model
+    name: "GPT-5.4 Mini (OpenAI)"    # Display name shown in the frontend dropdown
     provider: "openai_compatible"     # Provider class to use (maps to providers/ module)
     base_url: "https://api.openai.com/v1"  # API endpoint for this provider
-    model_id: "gpt-4o"               # Model name sent in API requests
+    model_id: "gpt-5.4-mini"         # Model name sent in API requests
     api_key_env: "OPENAI_API_KEY"     # .env variable holding the API key
     system_prompt: >                  # System message prepended to every conversation
-      Ban la tro ly mua sam cua RunShop, cua hang giay chay bo.
-      Tra loi bang tieng Viet, ngan gon va huu ich.
+      You are a helpful AI assistant!
     max_tokens: 256                   # Maximum tokens for model generation
     temperature: 0                    # Sampling temperature (0 = deterministic)
