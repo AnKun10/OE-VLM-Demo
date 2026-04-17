@@ -59,7 +59,7 @@ class QwenVLLMProvider(VLMProvider):
             messages, self._min_pixels, self._max_pixels
         )
 
-        last_exc: APIConnectionError
+        last_exc: APIConnectionError | None = None
         for attempt in range(config.MAX_RETRIES + 1):
             try:
                 response = self._client.chat.completions.create(
@@ -75,6 +75,7 @@ class QwenVLLMProvider(VLMProvider):
                 if attempt < config.MAX_RETRIES:
                     time.sleep(config.RETRY_BACKOFF_S)
 
+        assert last_exc is not None
         raise ConnectionError(
             f"Cannot connect to model '{self._model_id}' at {self._base_url}. "
             f"Is the vLLM server running? ({last_exc})"

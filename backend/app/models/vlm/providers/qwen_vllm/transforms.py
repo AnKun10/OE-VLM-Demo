@@ -45,6 +45,10 @@ def inject_pixel_bounds(
 ) -> list[dict]:
     """Return a copy of messages with min_pixels/max_pixels attached to
     every image_url content part. No-op for text-only messages.
+
+    Walks all roles (not just user) because image parts can in principle
+    appear anywhere; in practice only user turns carry them in this
+    codebase.
     """
     out = deepcopy(messages)
     for msg in out:
