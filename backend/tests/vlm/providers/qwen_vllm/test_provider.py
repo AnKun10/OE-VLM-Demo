@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-from openai import APIConnectionError
+from openai import APIConnectionError, BadRequestError
 
 from app.models.vlm.providers.qwen_vllm.provider import QwenVLLMProvider
 
@@ -119,3 +119,25 @@ def test_generate_applies_transforms_before_call():
     assert text_part["text"] == "see  this"
     assert img_part["image_url"]["min_pixels"] == 111
     assert img_part["image_url"]["max_pixels"] == 222
+
+
+def test_generate_does_not_catch_bad_request_error():
+    provider = QwenVLLMProvider(
+        base_url="http://fake/v1",
+        api_key="none",
+        model_id="Qwen/Qwen3-VL-8B-Instruct",
+    )
+    err = BadRequestError(
+        message="bad",
+        response=httpx.Response(400, request=httpx.Request("POST", "http://fake")),
+        body=None,
+    )
+    with patch.object(
+        provider._client.chat.completions, "create", side_effect=err
+    ):
+        with pytest.raises(BadRequestError):
+            provider.generate(
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=10,
+                temperature=0,
+            )

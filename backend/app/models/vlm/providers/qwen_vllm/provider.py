@@ -49,7 +49,7 @@ class QwenVLLMProvider(VLMProvider):
             messages, self._min_pixels, self._max_pixels
         )
 
-        last_exc: APIConnectionError | None = None
+        last_exc: APIConnectionError
         for attempt in range(config.MAX_RETRIES + 1):
             try:
                 response = self._client.chat.completions.create(
