@@ -1,6 +1,9 @@
 import copy
 
-from app.models.vlm.providers.qwen_vllm.transforms import strip_image_tokens
+from app.models.vlm.providers.qwen_vllm.transforms import (
+    inject_pixel_bounds,
+    strip_image_tokens,
+)
 
 
 def test_strip_image_tokens_removes_image_tag():
@@ -51,4 +54,33 @@ def test_strip_image_tokens_does_not_mutate_input():
     msgs = [{"role": "user", "content": "Hello <image>"}]
     snapshot = copy.deepcopy(msgs)
     strip_image_tokens(msgs)
+    assert msgs == snapshot
+
+
+def test_inject_pixel_bounds_attaches_bounds_to_image_parts():
+    msgs = [{
+        "role": "user",
+        "content": [
+            {"type": "image_url", "image_url": {"url": "x"}},
+            {"type": "text", "text": "hi"},
+        ],
+    }]
+    out = inject_pixel_bounds(msgs, 100, 200)
+    assert out[0]["content"][0]["image_url"]["min_pixels"] == 100
+    assert out[0]["content"][0]["image_url"]["max_pixels"] == 200
+
+
+def test_inject_pixel_bounds_noop_for_text_only():
+    msgs = [{"role": "user", "content": "hello"}]
+    out = inject_pixel_bounds(msgs, 100, 200)
+    assert out == msgs
+
+
+def test_inject_pixel_bounds_does_not_mutate_input():
+    msgs = [{
+        "role": "user",
+        "content": [{"type": "image_url", "image_url": {"url": "x"}}],
+    }]
+    snapshot = copy.deepcopy(msgs)
+    inject_pixel_bounds(msgs, 100, 200)
     assert msgs == snapshot

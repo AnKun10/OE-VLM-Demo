@@ -36,3 +36,25 @@ def _strip(text: str) -> str:
     for pat in _COMPILED_TOKEN_PATTERNS:
         text = pat.sub("", text)
     return text
+
+
+def inject_pixel_bounds(
+    messages: list[dict],
+    min_pixels: int,
+    max_pixels: int,
+) -> list[dict]:
+    """Return a copy of messages with min_pixels/max_pixels attached to
+    every image_url content part. No-op for text-only messages.
+    """
+    out = deepcopy(messages)
+    for msg in out:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                image_url = part.get("image_url")
+                if isinstance(image_url, dict):
+                    image_url["min_pixels"] = min_pixels
+                    image_url["max_pixels"] = max_pixels
+    return out
