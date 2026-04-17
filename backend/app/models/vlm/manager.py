@@ -8,10 +8,12 @@ import yaml
 
 from .providers.base import VLMProvider
 from .providers.openai_compatible import OpenAICompatibleProvider
+from .providers.qwen_vllm import QwenVLLMProvider
 
 # Maps provider name in YAML -> provider class
 PROVIDER_MAP: dict[str, type[VLMProvider]] = {
     "openai_compatible": OpenAICompatibleProvider,
+    "qwen_vllm": QwenVLLMProvider,
 }
 
 
@@ -47,11 +49,17 @@ class VLMManager:
                 api_key = "none"
 
             provider_cls = PROVIDER_MAP[provider_name]
-            provider = provider_cls(
-                base_url=entry["base_url"],
-                api_key=api_key,
-                model_id=entry["model_id"],
-            )
+            provider_kwargs: dict[str, Any] = {
+                "base_url": entry["base_url"],
+                "api_key": api_key,
+                "model_id": entry["model_id"],
+            }
+            if provider_name == "qwen_vllm":
+                if "min_pixels" in entry:
+                    provider_kwargs["min_pixels"] = entry["min_pixels"]
+                if "max_pixels" in entry:
+                    provider_kwargs["max_pixels"] = entry["max_pixels"]
+            provider = provider_cls(**provider_kwargs)
 
             self.models[model_id] = entry
             self.providers[model_id] = provider

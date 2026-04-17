@@ -10,16 +10,18 @@ models:
     max_tokens: 256                   # Maximum tokens for model generation
     temperature: 0                    # Sampling temperature (0 = deterministic)
 
-  - id: "llava-1.5-7b-local"         # Unique identifier — sent by frontend to select this model
-    name: "LLaVA 1.5 7B (Local)"     # Display name shown in the frontend dropdown
-    provider: "openai_compatible"     # Provider class to use (maps to providers/ module)
-    base_url: "http://localhost:8002/v1"  # API endpoint for this provider
-    model_id: "llava-hf/llava-1.5-7b-hf"  # Model name sent in API requests
+  - id: "qwen3-vl-8b-vllm"           # Unique identifier — sent by frontend to select this model
+    name: "Qwen3-VL 8B (vLLM)"       # Display name shown in the frontend dropdown
+    provider: "qwen_vllm"             # Provider class to use (maps to providers/ module)
+    base_url: "http://localhost:8003/v1"  # SSH-tunneled endpoint to remote vLLM server
+    model_id: "Qwen/Qwen3-VL-8B-Instruct"  # Model name sent in API requests
     api_key_env: null                 # .env variable holding the API key (null = no auth, uses "none")
     system_prompt: >                  # System message prepended to every conversation
       You are a helpful AI assistant!
-    max_tokens: 256                   # Maximum tokens for model generation
+    max_tokens: 512                   # Maximum tokens for model generation
     temperature: 0                    # Sampling temperature (0 = deterministic)
+    min_pixels: 200704                # Qwen processor lower bound (optional — falls back to config.py)
+    max_pixels: 1605632               # Qwen processor upper bound (optional — falls back to config.py)
 
   - id: "gpt-5.4-mini"               # Unique identifier — sent by frontend to select this model
     name: "GPT-5.4 Mini (OpenAI)"    # Display name shown in the frontend dropdown
