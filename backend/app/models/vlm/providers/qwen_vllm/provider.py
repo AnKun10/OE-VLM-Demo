@@ -16,6 +16,16 @@ from . import config, transforms
 class QwenVLLMProvider(VLMProvider):
     """Provider for Qwen-family VL models served via vLLM HTTP."""
 
+    @classmethod
+    def extra_kwargs_from_entry(cls, entry: dict) -> dict:
+        """Extract min_pixels and max_pixels from a YAML model entry if present."""
+        kwargs: dict = {}
+        if "min_pixels" in entry:
+            kwargs["min_pixels"] = entry["min_pixels"]
+        if "max_pixels" in entry:
+            kwargs["max_pixels"] = entry["max_pixels"]
+        return kwargs
+
     def __init__(
         self,
         base_url: str,

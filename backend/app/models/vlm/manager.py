@@ -54,11 +54,8 @@ class VLMManager:
                 "api_key": api_key,
                 "model_id": entry["model_id"],
             }
-            if provider_name == "qwen_vllm":
-                if "min_pixels" in entry:
-                    provider_kwargs["min_pixels"] = entry["min_pixels"]
-                if "max_pixels" in entry:
-                    provider_kwargs["max_pixels"] = entry["max_pixels"]
+
+            provider_kwargs.update(provider_cls.extra_kwargs_from_entry(entry))
             provider = provider_cls(**provider_kwargs)
 
             self.models[model_id] = entry
