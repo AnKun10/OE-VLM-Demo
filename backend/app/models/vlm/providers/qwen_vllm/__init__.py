@@ -1,1 +1,3 @@
-# Populated in Task 5 once provider.py exists.
+from .provider import QwenVLLMProvider
+
+__all__ = ["QwenVLLMProvider"]
