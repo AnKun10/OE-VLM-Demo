@@ -1,11 +1,12 @@
 from typing import Optional
+
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.models.product import ProductResponse, ProductListResponse, FilterOptions
-from app.services.milvus_service import search_similar_products
 
-DEFAULT_STORES = ["AnStore", "ThanhStore", "TuanAnhStore"]
-DEFAULT_LAYERS = ["Background", "Texture", "Art"]
+from app.models.product import FilterOptions, ProductListResponse, ProductResponse
+from app.services.qdrant_service import search_similar_products
+
+DEFAULT_STORES = ["Sample User"]
 
 
 def _serialize(doc: dict) -> ProductResponse:
@@ -17,7 +18,6 @@ async def _fetch_products_by_ids(
     db: AsyncIOMotorDatabase,
     ids: list[str],
     stores: Optional[list[str]] = None,
-    layers: Optional[list[str]] = None,
     categories: Optional[list[str]] = None,
 ) -> list[dict]:
     valid_object_ids = [ObjectId(product_id) for product_id in ids if ObjectId.is_valid(product_id)]
@@ -27,8 +27,6 @@ async def _fetch_products_by_ids(
     mongo_query: dict = {"_id": {"$in": valid_object_ids}}
     if stores:
         mongo_query["store"] = {"$in": stores}
-    if layers:
-        mongo_query["layer"] = {"$in": layers}
     if categories:
         mongo_query["category"] = {"$in": categories}
 
@@ -36,13 +34,13 @@ async def _fetch_products_by_ids(
     doc_map = {str(doc["_id"]): doc for doc in docs}
     return [doc_map[product_id] for product_id in ids if product_id in doc_map]
 
+
 async def get_products(
     db: AsyncIOMotorDatabase,
     page: int = 1,
     page_size: int = 12,
     search: Optional[str] = None,
     stores: Optional[list[str]] = None,
-    layers: Optional[list[str]] = None,
     categories: Optional[list[str]] = None,
     sort_by: str = "created",
     sort_order: str = "desc",
@@ -52,24 +50,20 @@ async def get_products(
     query: dict = {}
 
     if search:
-        # TODO: add cache/Redis to save query+ids.
         ids = search_similar_products(
             search,
             top_k=100,
             stores=stores,
-            layers=layers,
         )
         skip = (page - 1) * page_size
         ordered_docs = await _fetch_products_by_ids(
             db,
             ids[skip : skip + page_size],
             stores=stores,
-            layers=layers,
             categories=categories,
         )
-        total = len(ids) # Is top-k: 100
-        paged_docs = ordered_docs
-        items = [_serialize(doc) for doc in paged_docs]
+        total = len(ids)
+        items = [_serialize(doc) for doc in ordered_docs]
         return ProductListResponse(
             items=items,
             total=total,
@@ -80,8 +74,6 @@ async def get_products(
 
     if stores:
         query["store"] = {"$in": stores}
-    if layers:
-        query["layer"] = {"$in": layers}
     if categories:
         query["category"] = {"$in": categories}
 
@@ -124,7 +116,6 @@ async def get_filter_options(db: AsyncIOMotorDatabase) -> FilterOptions:
     return FilterOptions(
         stores=sorted(set(DEFAULT_STORES) | set(stores)),
         categories=sorted(categories),
-        layers=DEFAULT_LAYERS,
     )
 
 
@@ -134,10 +125,12 @@ async def get_related_products(
     product = await get_product_by_id(db, product_id)
     if not product:
         return []
-    ids = search_similar_products(f"{product.name} {product.store} {product.category}", top_k=limit + 1)
+    ids = search_similar_products(
+        f"{product.name} {product.store} {product.category}",
+        top_k=limit + 1,
+    )
     ids = [i for i in ids if i != product_id][:limit]
     if not ids:
-        # Fallback: same category
         cursor = (
             db.products.find({"category": product.category, "_id": {"$ne": ObjectId(product_id)}})
             .limit(limit)

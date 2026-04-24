@@ -1,5 +1,4 @@
-from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from bson import ObjectId
 
 
@@ -19,9 +18,7 @@ class ProductCreate(BaseModel):
     name: str
     image_url: str
     store: str
-    layer: str
     category: str
-    description: str
 
 
 class ProductResponse(BaseModel):
@@ -29,9 +26,7 @@ class ProductResponse(BaseModel):
     name: str
     image_url: str
     store: str
-    layer: str
     category: str
-    description: str
 
     class Config:
         populate_by_name = True
@@ -48,4 +43,3 @@ class ProductListResponse(BaseModel):
 class FilterOptions(BaseModel):
     stores: list[str]
     categories: list[str]
-    layers: list[str]
