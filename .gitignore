@@ -37,10 +37,8 @@ desktop.ini
 # Docker volumes
 volumes/
 
-# Milvus / MinIO local data
-milvus_data/
-minio_data/
-etcd_data/
+# Qdrant local storage
+backend/qdrant_storage/
 
 # Logs
 *.log
