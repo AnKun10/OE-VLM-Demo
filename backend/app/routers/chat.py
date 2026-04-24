@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.database import get_db
-from app.services.milvus_service import search_similar_products
+from app.services.qdrant_service import search_similar_products
 from bson import ObjectId
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])

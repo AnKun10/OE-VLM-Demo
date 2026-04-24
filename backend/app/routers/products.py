@@ -1,8 +1,10 @@
 from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
+
 from app.database import get_db
-from app.models.product import ProductListResponse, ProductResponse, FilterOptions
+from app.models.product import FilterOptions, ProductListResponse, ProductResponse
 from app.services import product_service
 
 router = APIRouter(prefix="/api/products", tags=["products"])
@@ -19,7 +21,6 @@ async def list_products(
     page_size: int = Query(12, ge=1, le=100),
     search: Optional[str] = Query(None),
     stores: Optional[list[str]] = Query(None),
-    layers: Optional[list[str]] = Query(None),
     categories: Optional[list[str]] = Query(None),
     sort_by: str = Query("created", pattern="^(created|name)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
@@ -32,7 +33,6 @@ async def list_products(
         page_size=page_size,
         search=search,
         stores=stores,
-        layers=layers,
         categories=categories,
         sort_by=sort_by,
         sort_order=sort_order,
