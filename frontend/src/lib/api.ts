@@ -7,7 +7,6 @@ export interface ProductsParams {
   page_size?: number;
   search?: string;
   stores?: string[];
-  layers?: string[];
   categories?: string[];
   sort_by?: string;
   sort_order?: string;

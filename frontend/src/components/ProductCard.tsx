@@ -66,12 +66,9 @@ export default function ProductCard({ product }: ProductCardProps) {
             </span>
           </div>
 
-          <div className="flex items-center justify-between gap-2">
-            <Badge variant="outline" className="max-w-[48%] truncate border-[#0d1b67]/15 bg-[#f4f7ff] text-[#0d1b67]">
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="max-w-full truncate border-[#0d1b67]/15 bg-[#f4f7ff] text-[#0d1b67]">
               {product.store}
-            </Badge>
-            <Badge variant="outline" className="max-w-[48%] truncate border-[#2f6f55]/15 bg-[#edf8f2] text-[#2f6f55]">
-              {product.layer}
             </Badge>
           </div>
         </div>

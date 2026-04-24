@@ -3,9 +3,7 @@ export interface Product {
   name: string;
   image_url: string;
   store: string;
-  layer: string;
   category: string;
-  description: string;
 }
 
 export interface ProductListResponse {
@@ -19,5 +17,4 @@ export interface ProductListResponse {
 export interface FilterOptions {
   stores: string[];
   categories: string[];
-  layers: string[];
 }
