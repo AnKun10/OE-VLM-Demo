@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**OE-VLM Shop** is a Vietnamese-language e-commerce demo for running shoes. It demonstrates vector-based semantic search using Milvus alongside standard MongoDB filtering.
+**OE-VLM Shop** is a Vietnamese-language e-commerce demo for running shoes. It demonstrates vector-based semantic search using Qdrant alongside standard MongoDB filtering.
 
 ## Development Commands
 
 ### Infrastructure (Docker)
 ```bash
-docker compose up -d    # Start MongoDB (27017), Milvus (19530), etcd, MinIO
-docker compose down     # Stop all services
+docker compose up -d    # Start MongoDB (27017). Qdrant runs embedded in the backend process.
+docker compose down     # Stop MongoDB
 ```
 
 ### Backend
@@ -21,8 +21,8 @@ python -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-uvicorn app.main:app --reload --port 8000   # Start dev server
-python seed_data.py                          # Seed MongoDB + Milvus with sample products
+uvicorn app.main:app --reload --port 8000           # Start dev server
+python seed_data.py --csv ./data/products.csv       # Seed MongoDB + Qdrant from a CSV
 ```
 
 ### Frontend
@@ -40,25 +40,27 @@ No test or lint commands are configured.
 ### Stack
 - **Backend**: FastAPI + Uvicorn (Python 3.11+)
 - **Metadata DB**: MongoDB 7 via Motor (async)
-- **Vector Search**: Milvus v2.4.13 with 384-dim cosine embeddings (`all-MiniLM-L6-v2`)
+- **Vector Search**: Qdrant embedded (local file storage) with 768-dim cosine embeddings from `qihoo360/fg-clip2-base` (FG-CLIP 2 base via `AutoModelForCausalLM(trust_remote_code=True)`)
 - **Frontend**: React 18 + Vite + TypeScript, TailwindCSS + ShadCN UI
 
 ### Key Design Points
 
-**Dual search modes**: Products can be retrieved via standard MongoDB text/filter queries or semantic vector search through Milvus. The `semantic=true` query parameter switches modes. Milvus is optional — if unavailable, related-products falls back to category-based filtering.
+**Search**: Products are retrieved via MongoDB filters or semantic text search through Qdrant. The `search` query string switches modes (when `search` is present, Qdrant returns a ranked ID list which is then resolved in Mongo).
 
-**Startup lifecycle** (`backend/app/main.py`): The FastAPI lifespan context manager connects to both MongoDB and Milvus on startup, creating indexes if they don't exist.
+**Startup lifecycle** (`backend/app/main.py`): The FastAPI lifespan context connects to MongoDB, loads the FG-CLIP 2 model (which also caches the fusion-text embedding), then opens the embedded Qdrant client. On shutdown they're released in reverse order.
 
-**Embedding pipeline** (`backend/app/services/milvus_service.py`): SentenceTransformer is lazy-loaded on first use. Embeddings are generated from product text and stored in Milvus at seed time. Search uses `nprobe=16`, `IVF_FLAT` index.
+**Embedding pipeline** (`backend/app/services/clip_service.py`): FG-CLIP 2 is lazy-loaded on first use. At seed time, the product image is fetched, preprocessed with "method 2" alpha compositing when it has a transparent background, embedded via `get_image_features`, and early-fused with the fixed prompt `"transparent background, isolated object"` (weights 0.9/0.1) before L2 normalization. At query time, only `embed_text` is called.
+
+**Concurrency note**: The embedded Qdrant holds a file lock on `backend/qdrant_storage/`. Stop the backend (`uvicorn`) before running `seed_data.py`, and vice versa.
 
 **API proxy**: Vite dev server proxies `/api/*` to `http://localhost:8000`, so the frontend always uses relative `/api` paths.
 
-**Environment config**: Backend reads from `backend/.env` (see `backend/.env.example`). Key variables: `MONGODB_URL`, `MILVUS_HOST`, `MILVUS_PORT`.
+**Environment config**: Backend reads from `backend/.env` (see `backend/.env.example`). Key variables: `MONGODB_URL`, `QDRANT_PATH`, `FGCLIP_MODEL_ID`.
 
 ### Request Flow
 1. Frontend (`frontend/src/lib/api.ts`) builds query strings and fetches `/api/products`
 2. FastAPI router (`backend/app/routers/products.py`) parses params and calls service layer
-3. `product_service.py` queries MongoDB with filters/pagination or delegates to `milvus_service.py` for semantic search
+3. `product_service.py` queries MongoDB with filters/pagination or delegates to `qdrant_service.py` for semantic search
 4. Results serialized via `ProductResponse` Pydantic models and returned as `ProductListResponse`
 
 ### Routes
@@ -68,4 +70,4 @@ No test or lint commands are configured.
 | `/products` | `GET /api/products` (filtered list) |
 | `/products/:id` | `GET /api/products/{id}` + `GET /api/products/{id}/related` |
 
-The `/api/products` endpoint supports: `page`, `page_size`, `search`, `brands[]`, `categories[]`, `min_price`, `max_price`, `sort_by`, `sort_order`, `semantic`.
+The `/api/products` endpoint supports: `page`, `page_size`, `search`, `stores[]`, `categories[]`, `sort_by`, `sort_order`, `semantic`.
