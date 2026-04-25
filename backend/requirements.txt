@@ -3,8 +3,8 @@ uvicorn[standard]==0.32.0
 motor==3.6.0
 qdrant-client>=1.11.0
 marshmallow>=3.13.0,<4
-torch==2.5.1
-torchvision==0.20.1
+torch==2.11.0
+torchvision==0.26.0
 transformers>=4.56.0
 sentencepiece==0.2.0
 setuptools<81
