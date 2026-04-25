@@ -65,9 +65,9 @@ def search_similar_products(
         return []
 
     try:
-        hits = client.search(
+        result = client.query_points(
             collection_name=settings.qdrant_collection,
-            query_vector=vec,
+            query=vec,
             limit=top_k,
             query_filter=_build_filter(stores),
             with_payload=True,
@@ -75,4 +75,4 @@ def search_similar_products(
     except Exception:
         return []
 
-    return [str(hit.payload.get("product_id", "")) for hit in hits if hit.payload]
+    return [str(hit.payload.get("product_id", "")) for hit in result.points if hit.payload]
