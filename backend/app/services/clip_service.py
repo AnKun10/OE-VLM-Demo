@@ -12,6 +12,9 @@ from app.config import settings
 MODEL_ID = settings.fgclip_model_id
 DEFAULT_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+_WALK_TYPE_MAX_LENGTH: dict[str, int] = {"short": 64, "long": 196}
+_SHORT_TOKEN_THRESHOLD = _WALK_TYPE_MAX_LENGTH["short"]
+
 _model: Any | None = None
 _tokenizer: Any | None = None
 _image_processor: Any | None = None
@@ -69,22 +72,50 @@ def _determine_max_patches(image: Image.Image) -> int:
     return 128
 
 
+def _repair_text_embeddings(model: Any, device: str) -> None:
+    # FG-CLIP 2's remote code registers `position_ids` as a non-persistent buffer twice
+    # via `torch.arange(...).expand((1, -1))`; under torch >= 2.11 the second registration's
+    # storage is invalidated, leaving garbage indices that crash position_embedding lookup.
+    # `mask1`/`mask2` are plain attributes that come back as meta tensors after from_pretrained.
+    # Rebuild them with valid values so both walk_type="short" and "long" paths work.
+    text_emb = model.text_model.embeddings
+    tcfg = model.config.text_config
+    longtext_len = int(tcfg.longtext_len)
+    keep_len = int(tcfg.keep_len)
+
+    text_emb.register_buffer(
+        "position_ids",
+        torch.arange(longtext_len, device=device).unsqueeze(0).contiguous(),
+        persistent=False,
+    )
+    mask1 = torch.zeros([longtext_len, 1])
+    mask1[:keep_len, :] = 1
+    mask2 = torch.zeros([longtext_len, 1])
+    mask2[keep_len:, :] = 1
+    text_emb.mask1 = mask1
+    text_emb.mask2 = mask2
+
+
 def _load_on_device(device: str):
     model = AutoModelForCausalLM.from_pretrained(MODEL_ID, trust_remote_code=True).to(device)
     model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    image_processor = AutoImageProcessor.from_pretrained(MODEL_ID)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
+    image_processor = AutoImageProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
+
+    _repair_text_embeddings(model, device)
 
     with torch.no_grad():
+        probe_walk_type = "short"
+        probe_max_length = _WALK_TYPE_MAX_LENGTH[probe_walk_type]
         dummy_tokens = tokenizer(
             ["probe"],
             padding="max_length",
             truncation=True,
-            max_length=196,
+            max_length=probe_max_length,
             return_tensors="pt",
         )
         dummy_tokens = _move_inputs_to_device(dummy_tokens, device)
-        feat = model.get_text_features(**dummy_tokens, walk_type="long")
+        feat = model.get_text_features(**dummy_tokens, walk_type=probe_walk_type)
         vector_size = int(feat.shape[-1])
     return model, tokenizer, image_processor, vector_size
 
@@ -141,15 +172,22 @@ def get_runtime_device() -> str:
 def embed_text(text: str) -> np.ndarray:
     load_clip_model()
     device = _runtime_device
+    cleaned = text.lower().strip()
+
+    probe = _tokenizer([cleaned], padding=False, truncation=False, return_tensors="pt")
+    real_len = int(probe["input_ids"].shape[-1])
+    walk_type = "short" if real_len <= _SHORT_TOKEN_THRESHOLD else "long"
+    max_length = _WALK_TYPE_MAX_LENGTH[walk_type]
+
     tokens = _tokenizer(
-        [text.lower().strip()],
+        [cleaned],
         padding="max_length",
         truncation=True,
-        max_length=196,
+        max_length=max_length,
         return_tensors="pt",
     )
     tokens = _move_inputs_to_device(tokens, device)
-    feat = _model.get_text_features(**tokens, walk_type="long")
+    feat = _model.get_text_features(**tokens, walk_type=walk_type)
     feat = feat / feat.norm(p=2, dim=-1, keepdim=True)
     return feat[0].detach().cpu().numpy().astype(np.float32)
 

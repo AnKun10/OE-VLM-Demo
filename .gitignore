@@ -40,5 +40,10 @@ volumes/
 # Qdrant local storage
 backend/qdrant_storage/
 
+# Local data / archives / personal notes
+backend/data/
+Note.md
+bundle.tar.gz
+
 # Logs
 *.log
