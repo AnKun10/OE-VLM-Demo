@@ -96,11 +96,34 @@ Lần đầu sẽ download checkpoint (≈ 2 GB) về `~/.cache/huggingface/`. O
 
 ---
 
-## 4. Seed dữ liệu
+## 4. Dữ liệu
+
+Hai cách: **(A) tải snapshot Qdrant có sẵn** (nhanh, khuyến nghị nếu MongoDB đã trỏ Atlas dùng chung) hoặc **(B) seed lại từ CSV** (chậm hơn, dùng khi chạy Mongo local hoặc muốn rebuild embedding).
+
+> 🛑 **Backend (uvicorn) phải đang TẮT** trước khi chạy bất kỳ thao tác nào với `backend/qdrant_storage/` — embedded Qdrant giữ file lock độc quyền.
+
+### 4.A. Tải snapshot Qdrant từ Hugging Face (khuyến nghị)
+
+Dùng khi `MONGODB_URL` trong `.env` đã trỏ tới Atlas (ObjectId stable → khớp với embedding trong snapshot).
+
+```bash
+pip install -U huggingface_hub        # nếu chưa có
+
+# từ repo root
+hf download ntAnh-dev/oe-vlm-qdrant bundle.tar.gz \
+  --repo-type dataset \
+  --local-dir .
+
+# giải nén vào đúng vị trí backend/qdrant_storage/
+tar -xzf bundle.tar.gz
+rm -f backend/qdrant_storage/.lock    # phòng khi snapshot kèm lock cũ
+```
+
+Skip hoàn toàn FG-CLIP 2 download (~2 GB) và bước embedding 30–60 phút. Sang thẳng mục 5.
+
+### 4.B. Seed lại từ CSV
 
 CSV nguồn đã có sẵn ở `backend/data/products.csv` (3.4k dòng).
-
-> 🛑 **Backend (uvicorn) phải đang TẮT** trước khi chạy seed — embedded Qdrant giữ file lock độc quyền trên `backend/qdrant_storage/`.
 
 ```bash
 # vẫn đang ở backend/ với venv bật
