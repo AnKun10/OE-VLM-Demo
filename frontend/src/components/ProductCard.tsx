@@ -1,14 +1,14 @@
 import { Link } from "react-router-dom";
 import { Heart, MessageCircle } from "lucide-react";
 import type { Product } from "@/types";
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 
 interface ProductCardProps {
   product: Product;
 }
 
-export default function ProductCard({ product }: ProductCardProps) {
+function ProductCard({ product }: ProductCardProps) {
   const [imgError, setImgError] = useState(false);
   const [wishlisted, setWishlisted] = useState(false);
 
@@ -76,3 +76,5 @@ export default function ProductCard({ product }: ProductCardProps) {
     </Link>
   );
 }
+
+export default memo(ProductCard);
