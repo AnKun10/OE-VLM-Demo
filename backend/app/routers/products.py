@@ -1,8 +1,10 @@
 from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
+
 from app.database import get_db
-from app.models.product import ProductListResponse, ProductResponse, FilterOptions
+from app.models.product import FilterOptions, ProductListResponse, ProductResponse
 from app.services import product_service
 
 router = APIRouter(prefix="/api/products", tags=["products"])

@@ -1,10 +1,12 @@
 from typing import Optional
+
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.models.product import ProductCreate, ProductResponse, ProductListResponse, FilterOptions
-from app.services.milvus_service import upsert_product_embedding, search_similar_products
 
-DEFAULT_STORES = ["AnStore", "ThanhStore", "TuanAnhStore"]
+from app.models.product import FilterOptions, ProductListResponse, ProductResponse
+from app.services.qdrant_service import search_similar_products
+
+DEFAULT_STORES = ["Sample User"]
 
 
 def _serialize(doc: dict) -> ProductResponse:
@@ -33,20 +35,6 @@ async def _fetch_products_by_ids(
     return [doc_map[product_id] for product_id in ids if product_id in doc_map]
 
 
-async def create_product(db: AsyncIOMotorDatabase, product: ProductCreate) -> ProductResponse:
-    doc = product.model_dump()
-    result = await db.products.insert_one(doc)
-    created = await db.products.find_one({"_id": result.inserted_id})
-    response = _serialize(created)
-    text = f"{product.name} {product.store} {product.category} {product.description}"
-    upsert_product_embedding(
-        response.id,
-        text,
-        store=product.store,
-    )
-    return response
-
-
 async def get_products(
     db: AsyncIOMotorDatabase,
     page: int = 1,
@@ -67,16 +55,15 @@ async def get_products(
             top_k=100,
             stores=stores,
         )
+        skip = (page - 1) * page_size
         ordered_docs = await _fetch_products_by_ids(
             db,
-            ids,
+            ids[skip : skip + page_size],
             stores=stores,
             categories=categories,
         )
-        total = len(ordered_docs)
-        skip = (page - 1) * page_size
-        paged_docs = ordered_docs[skip : skip + page_size]
-        items = [_serialize(doc) for doc in paged_docs]
+        total = len(ids)
+        items = [_serialize(doc) for doc in ordered_docs]
         return ProductListResponse(
             items=items,
             total=total,
@@ -138,10 +125,12 @@ async def get_related_products(
     product = await get_product_by_id(db, product_id)
     if not product:
         return []
-    ids = search_similar_products(f"{product.name} {product.store} {product.category}", top_k=limit + 1)
+    ids = search_similar_products(
+        f"{product.name} {product.store} {product.category}",
+        top_k=limit + 1,
+    )
     ids = [i for i in ids if i != product_id][:limit]
     if not ids:
-        # Fallback: same category
         cursor = (
             db.products.find({"category": product.category, "_id": {"$ne": ObjectId(product_id)}})
             .limit(limit)

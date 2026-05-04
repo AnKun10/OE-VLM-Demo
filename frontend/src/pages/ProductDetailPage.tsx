@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import ProductCard from "@/components/ProductCard";
 import { api } from "@/lib/api";
 import type { Product } from "@/types";
@@ -99,13 +98,6 @@ export default function ProductDetailPage() {
               >
                 {product.category}
               </Link>
-            </div>
-
-            <Separator />
-
-            <div>
-              <h2 className="text-sm font-semibold text-gray-900 mb-2">Mô tả</h2>
-              <p className="text-sm text-gray-600 leading-relaxed">{product.description}</p>
             </div>
 
             <div className="pt-2">

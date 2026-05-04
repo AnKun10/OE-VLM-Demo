@@ -1,10 +1,12 @@
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymilvus import connections, Collection, CollectionSchema, FieldSchema, DataType, utility
+from qdrant_client import QdrantClient
+from qdrant_client.http.models import Distance, PayloadSchemaType, VectorParams
+
 from app.config import settings
 from app.services.clip_service import get_vector_size
 
 # MongoDB
-mongo_client: AsyncIOMotorClient = None
+mongo_client: AsyncIOMotorClient | None = None
 mongo_db = None
 
 
@@ -16,8 +18,11 @@ async def connect_mongodb():
 
 
 async def disconnect_mongodb():
-    if mongo_client:
+    global mongo_client, mongo_db
+    if mongo_client is not None:
         mongo_client.close()
+        mongo_client = None
+        mongo_db = None
         print("Disconnected from MongoDB")
 
 
@@ -25,53 +30,57 @@ def get_db():
     return mongo_db
 
 
-# Milvus
-def connect_milvus():
+# Qdrant (embedded, local file storage)
+_qdrant_client: QdrantClient | None = None
+
+
+def connect_qdrant() -> None:
+    global _qdrant_client
     try:
-        connections.connect(
-            alias="default",
-            host=settings.milvus_host,
-            port=settings.milvus_port,
-        )
-        _ensure_collection()
-        print("Connected to Milvus")
+        _qdrant_client = QdrantClient(path=settings.qdrant_path)
     except Exception as e:
-        print(f"Warning: Could not connect to Milvus: {e}. Semantic search will be unavailable.")
+        raise RuntimeError(
+            f"Qdrant storage '{settings.qdrant_path}' is locked or inaccessible. "
+            f"Stop the backend before seeding (or vice versa). Original: {e}"
+        ) from e
+    _ensure_qdrant_collection()
+    print(f"Connected to Qdrant at {settings.qdrant_path}")
 
 
-def disconnect_milvus():
-    try:
-        connections.disconnect("default")
-        print("Disconnected from Milvus")
-    except Exception:
-        pass
+def disconnect_qdrant() -> None:
+    global _qdrant_client
+    if _qdrant_client is not None:
+        try:
+            _qdrant_client.close()
+        finally:
+            _qdrant_client = None
+            print("Disconnected from Qdrant")
 
 
-def _ensure_collection():
-    collection_name = settings.milvus_collection
-    if utility.has_collection(collection_name):
+def get_qdrant_client() -> QdrantClient | None:
+    return _qdrant_client
+
+
+def _ensure_qdrant_collection() -> None:
+    assert _qdrant_client is not None
+    collection_name = settings.qdrant_collection
+    existing = {c.name for c in _qdrant_client.get_collections().collections}
+    if collection_name in existing:
         return
 
     vector_size = get_vector_size()
-
-    fields = [
-        FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=64),
-        FieldSchema(name="store", dtype=DataType.VARCHAR, max_length=128),
-        FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=vector_size),
-    ]
-    schema = CollectionSchema(fields=fields, description="Product embeddings")
-    collection = Collection(name=collection_name, schema=schema)
-    collection.create_index(
-        field_name="vector",
-        index_params={"metric_type": "COSINE", "index_type": "IVF_FLAT", "params": {"nlist": 128}},
+    _qdrant_client.create_collection(
+        collection_name=collection_name,
+        vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
     )
-    print(f"Created Milvus collection: {collection_name}")
-
-
-def get_milvus_collection() -> Collection | None:
-    try:
-        col = Collection(settings.milvus_collection)
-        col.load()
-        return col
-    except Exception:
-        return None
+    _qdrant_client.create_payload_index(
+        collection_name=collection_name,
+        field_name="store",
+        field_schema=PayloadSchemaType.KEYWORD,
+    )
+    _qdrant_client.create_payload_index(
+        collection_name=collection_name,
+        field_name="category",
+        field_schema=PayloadSchemaType.KEYWORD,
+    )
+    print(f"Created Qdrant collection: {collection_name} (dim={vector_size})")

@@ -1,6 +1,7 @@
 # Python
 backend/venv/
 backend/.venv/
+backend/.python-version
 backend/images/
 __pycache__/
 *.py[cod]
@@ -15,6 +16,7 @@ build/
 .env.local
 .env.*.local
 !.env.example
+.envrc
 
 # Frontend
 frontend/node_modules/
@@ -35,10 +37,12 @@ desktop.ini
 # Docker volumes
 volumes/
 
-# Milvus / MinIO local data
-milvus_data/
-minio_data/
-etcd_data/
+# Qdrant local storage
+backend/qdrant_storage/
+
+# Local archives / personal notes
+Note.md
+bundle.tar.gz
 
 # Logs
 *.log

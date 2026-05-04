@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo, memo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Search, SlidersHorizontal, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,73 @@ const SORT_OPTIONS = [
   { value: "name_desc", label: "Tên Z-A" },
 ];
 
-const DEFAULT_STORE = "AnStore";
+const DEFAULT_STORE = "Sample User";
+
+interface FilterPanelProps {
+  filterOptions: FilterOptions | null;
+  selectedStore: string;
+  selectedCategories: string[];
+  hasActiveFilters: boolean;
+  onSelectStore: (store: string) => void;
+  onToggleCategory: (cat: string) => void;
+  onClearAll: () => void;
+}
+
+const FilterPanel = memo(function FilterPanel({
+  filterOptions,
+  selectedStore,
+  selectedCategories,
+  hasActiveFilters,
+  onSelectStore,
+  onToggleCategory,
+  onClearAll,
+}: FilterPanelProps) {
+  return (
+    <div className="space-y-6">
+      {hasActiveFilters && (
+        <Button variant="ghost" size="sm" onClick={onClearAll} className="text-red-500 hover:text-red-600 -ml-2">
+          <X className="h-4 w-4 mr-1" /> Xóa tất cả bộ lọc
+        </Button>
+      )}
+
+      {filterOptions && (
+        <div>
+          <h3 className="text-xs font-semibold text-[#0c1638] uppercase tracking-[0.06em] mb-3">Cửa Hàng</h3>
+          <div className="space-y-2">
+            {filterOptions.stores.map((store) => (
+              <label key={store} className="flex items-center gap-2 cursor-pointer group">
+                <Checkbox
+                  checked={selectedStore === store}
+                  onCheckedChange={() => onSelectStore(store)}
+                />
+                <span className="text-sm text-[#444956] group-hover:text-[#0d1b67]">{store}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Separator />
+
+      {filterOptions && (
+        <div>
+          <h3 className="text-xs font-semibold text-[#0c1638] uppercase tracking-[0.06em] mb-3">Danh Mục</h3>
+          <div className="space-y-2">
+            {filterOptions.categories.map((cat) => (
+              <label key={cat} className="flex items-center gap-2 cursor-pointer group">
+                <Checkbox
+                  checked={selectedCategories.includes(cat)}
+                  onCheckedChange={() => onToggleCategory(cat)}
+                />
+                <span className="text-sm text-[#444956] group-hover:text-[#0d1b67]">{cat}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
 
 export default function ProductListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -33,29 +99,35 @@ export default function ProductListPage() {
   const page = Number(searchParams.get("page") || "1");
   const sortValue = searchParams.get("sort") || "created_desc";
   const selectedStore = searchParams.get("stores") || DEFAULT_STORE;
-  const selectedCategories = searchParams.getAll("categories");
+  const selectedCategories = useMemo(
+    () => searchParams.getAll("categories"),
+    [searchParams],
+  );
 
   // Local search input
   const [searchInput, setSearchInput] = useState(search);
 
-  function updateParams(updates: Record<string, string | string[] | null>) {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      for (const [key, value] of Object.entries(updates)) {
-        if (value === null || (Array.isArray(value) && value.length === 0)) {
-          next.delete(key);
-        } else if (Array.isArray(value)) {
-          next.delete(key);
-          value.forEach((v) => next.append(key, v));
-        } else {
-          next.set(key, value);
+  const updateParams = useCallback(
+    (updates: Record<string, string | string[] | null>) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        for (const [key, value] of Object.entries(updates)) {
+          if (value === null || (Array.isArray(value) && value.length === 0)) {
+            next.delete(key);
+          } else if (Array.isArray(value)) {
+            next.delete(key);
+            value.forEach((v) => next.append(key, v));
+          } else {
+            next.set(key, value);
+          }
         }
-      }
-      // Reset page on filter change
-      if (!("page" in updates)) next.set("page", "1");
-      return next;
-    });
-  }
+        // Reset page on filter change
+        if (!("page" in updates)) next.set("page", "1");
+        return next;
+      });
+    },
+    [setSearchParams],
+  );
 
   // Load filter options once
   useEffect(() => {
@@ -92,74 +164,41 @@ export default function ProductListPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [fetchProducts]);
 
-  function selectStore(store: string) {
-    if (store === selectedStore) return;
-    updateParams({ stores: store });
-  }
+  const selectStore = useCallback(
+    (store: string) => {
+      if (store === selectedStore) return;
+      updateParams({ stores: store });
+    },
+    [selectedStore, updateParams],
+  );
 
-  function toggleCategory(cat: string) {
-    const next = selectedCategories.includes(cat)
-      ? selectedCategories.filter((c) => c !== cat)
-      : [...selectedCategories, cat];
-    updateParams({ categories: next });
-  }
+  const toggleCategory = useCallback(
+    (cat: string) => {
+      const next = selectedCategories.includes(cat)
+        ? selectedCategories.filter((c) => c !== cat)
+        : [...selectedCategories, cat];
+      updateParams({ categories: next });
+    },
+    [selectedCategories, updateParams],
+  );
 
-  function clearAllFilters() {
+  const clearAllFilters = useCallback(() => {
     setSearchParams({ page: "1", stores: DEFAULT_STORE });
-  }
+  }, [setSearchParams]);
 
   const hasActiveFilters =
     selectedCategories.length > 0 ||
     selectedStore !== DEFAULT_STORE;
 
-  const FilterPanel = () => (
-    <div className="space-y-6">
-      {/* Clear all */}
-      {hasActiveFilters && (
-        <Button variant="ghost" size="sm" onClick={clearAllFilters} className="text-red-500 hover:text-red-600 -ml-2">
-          <X className="h-4 w-4 mr-1" /> Xóa tất cả bộ lọc
-        </Button>
-      )}
-
-      {/* Stores */}
-      {filterOptions && (
-        <div>
-          <h3 className="text-xs font-semibold text-[#0c1638] uppercase tracking-[0.06em] mb-3">Cửa Hàng</h3>
-          <div className="space-y-2">
-            {filterOptions.stores.map((store) => (
-              <label key={store} className="flex items-center gap-2 cursor-pointer group">
-                <Checkbox
-                  checked={selectedStore === store}
-                  onCheckedChange={() => selectStore(store)}
-                />
-                <span className="text-sm text-[#444956] group-hover:text-[#0d1b67]">{store}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <Separator />
-
-      {/* Categories */}
-      {filterOptions && (
-        <div>
-          <h3 className="text-xs font-semibold text-[#0c1638] uppercase tracking-[0.06em] mb-3">Danh Mục</h3>
-          <div className="space-y-2">
-            {filterOptions.categories.map((cat) => (
-              <label key={cat} className="flex items-center gap-2 cursor-pointer group">
-                <Checkbox
-                  checked={selectedCategories.includes(cat)}
-                  onCheckedChange={() => toggleCategory(cat)}
-                />
-                <span className="text-sm text-[#444956] group-hover:text-[#0d1b67]">{cat}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  const filterPanelProps: FilterPanelProps = {
+    filterOptions,
+    selectedStore,
+    selectedCategories,
+    hasActiveFilters,
+    onSelectStore: selectStore,
+    onToggleCategory: toggleCategory,
+    onClearAll: clearAllFilters,
+  };
 
   return (
     <div className="bg-[#f7f7f7] min-h-screen">
@@ -259,7 +298,7 @@ export default function ProductListPage() {
           {filtersVisible && (
             <aside className="hidden md:block w-56 shrink-0">
               <div className="bg-white rounded-2xl p-5 sticky top-20 shadow-[0_4px_20px_rgba(0,0,0,0.06)]">
-                <FilterPanel />
+                <FilterPanel {...filterPanelProps} />
               </div>
             </aside>
           )}
@@ -275,7 +314,7 @@ export default function ProductListPage() {
                     <X className="h-5 w-5 text-[#444956]" />
                   </button>
                 </div>
-                <FilterPanel />
+                <FilterPanel {...filterPanelProps} />
               </div>
             </div>
           )}

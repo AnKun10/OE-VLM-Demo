@@ -4,7 +4,6 @@ export interface Product {
   image_url: string;
   store: string;
   category: string;
-  description: string;
 }
 
 export interface ProductListResponse {
