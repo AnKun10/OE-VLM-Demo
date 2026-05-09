@@ -36,7 +36,7 @@ def make_async_stream_mock(deltas):
 
     Usage:
         mock_create = make_async_stream_mock(["hello", " world"])
-        with patch.object(provider._client.chat.completions, "create", mock_create):
+        with patch.object(provider.client.chat.completions, "create", mock_create):
             ...
     """
     chunks = [make_chunk(d) for d in deltas]
