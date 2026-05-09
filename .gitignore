@@ -47,6 +47,7 @@ etcd_data/
 .claude/
 CLAUDE.md
 .playwright-mcp/
+.superpowers/
 
 # Docs
 docs/
