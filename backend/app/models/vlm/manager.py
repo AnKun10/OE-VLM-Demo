@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 import yaml
 
@@ -10,7 +10,6 @@ from .providers.base import VLMProvider
 from .providers.openai_compatible import OpenAICompatibleProvider
 from .providers.qwen_vllm import QwenVLLMProvider
 
-# Maps provider name in YAML -> provider class
 PROVIDER_MAP: dict[str, type[VLMProvider]] = {
     "openai_compatible": OpenAICompatibleProvider,
     "qwen_vllm": QwenVLLMProvider,
@@ -38,7 +37,6 @@ class VLMManager:
                 print(f"[VLMManager] Unknown provider '{provider_name}' for model '{model_id}', skipping.")
                 continue
 
-            # Resolve API key from environment
             api_key_env = entry.get("api_key_env")
             if api_key_env:
                 api_key = os.environ.get(api_key_env, "")
@@ -54,7 +52,6 @@ class VLMManager:
                 "api_key": api_key,
                 "model_id": entry["model_id"],
             }
-
             provider_kwargs.update(provider_cls.extra_kwargs_from_entry(entry))
             provider = provider_cls(**provider_kwargs)
 
@@ -66,28 +63,42 @@ class VLMManager:
 
         print(f"[VLMManager] Loaded {len(self.providers)} model(s): {list(self.providers.keys())}")
 
-    def list_models(self) -> list[dict[str, str]]:
+    def list_models(self) -> list[dict[str, Any]]:
         return [
-            {"id": model_id, "name": cfg["name"]}
+            {
+                "id": model_id,
+                "name": cfg["name"],
+                "capabilities": {
+                    "vision": bool(cfg.get("capabilities", {}).get("vision", False)),
+                },
+            }
             for model_id, cfg in self.models.items()
         ]
 
-    def generate(self, model_id: str | None, messages: list[dict]) -> str:
+    def _resolve(self, model_id: str | None) -> tuple[VLMProvider, dict[str, Any]]:
         resolved_id = model_id if model_id and model_id in self.providers else self.default_model
-
         if not resolved_id or resolved_id not in self.providers:
             raise RuntimeError("No VLM models are configured.")
+        return self.providers[resolved_id], self.models[resolved_id]
 
-        config = self.models[resolved_id]
-        provider = self.providers[resolved_id]
-
-        # Prepend system prompt
+    def _prepare_messages(self, config: dict[str, Any], messages: list[dict]) -> list[dict]:
         system_prompt = config.get("system_prompt", "").strip()
         if system_prompt:
-            messages = [{"role": "system", "content": system_prompt}] + messages
+            return [{"role": "system", "content": system_prompt}] + messages
+        return messages
 
-        return provider.generate(
-            messages=messages,
+    async def stream(self, model_id: str | None, messages: list[dict]) -> AsyncIterator[str]:
+        provider, config = self._resolve(model_id)
+        prepared = self._prepare_messages(config, messages)
+        async for delta in provider.stream(
+            messages=prepared,
             max_tokens=config.get("max_tokens", 256),
             temperature=config.get("temperature", 0),
-        )
+        ):
+            yield delta
+
+    async def generate(self, model_id: str | None, messages: list[dict]) -> str:
+        chunks: list[str] = []
+        async for delta in self.stream(model_id, messages):
+            chunks.append(delta)
+        return "".join(chunks).strip()
