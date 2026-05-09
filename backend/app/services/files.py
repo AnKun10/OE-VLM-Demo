@@ -73,3 +73,18 @@ def store_upload(upload: UploadFile) -> StoredFile:
         size=size,
         original_name=upload.filename or "",
     )
+
+
+def open_image_bytes(file_id: str) -> tuple[bytes, str] | None:
+    """Resolve a file id to (bytes, mime), or None if not found.
+
+    Rejects ids that don't match FILE_ID_PATTERN, blocking path traversal
+    before any file system access.
+    """
+    if not FILE_ID_PATTERN.match(file_id):
+        return None
+    for mime, ext in EXT_BY_MIME.items():
+        path = IMAGES_DIR / f"{file_id}.{ext}"
+        if path.exists():
+            return path.read_bytes(), mime
+    return None

@@ -104,3 +104,42 @@ def test_store_upload_strips_path_traversal_filename(tmp_path, monkeypatch):
     assert expected_path.exists()
     # Nothing got written to a parent
     assert not (tmp_path.parent / "etc").exists()
+
+
+def test_open_image_bytes_returns_bytes_and_mime(tmp_path, monkeypatch):
+    monkeypatch.setattr(files_mod, "IMAGES_DIR", tmp_path)
+    data = _png_bytes()
+    fid = "a" * 32
+    (tmp_path / f"{fid}.png").write_bytes(data)
+
+    result = files_mod.open_image_bytes(fid)
+    assert result is not None
+    bytes_, mime = result
+    assert bytes_ == data
+    assert mime == "image/png"
+
+
+def test_open_image_bytes_finds_jpeg_extension(tmp_path, monkeypatch):
+    monkeypatch.setattr(files_mod, "IMAGES_DIR", tmp_path)
+    data = _jpeg_bytes()
+    fid = "b" * 32
+    (tmp_path / f"{fid}.jpg").write_bytes(data)
+
+    result = files_mod.open_image_bytes(fid)
+    assert result is not None
+    _, mime = result
+    assert mime == "image/jpeg"
+
+
+def test_open_image_bytes_returns_none_for_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(files_mod, "IMAGES_DIR", tmp_path)
+    assert files_mod.open_image_bytes("c" * 32) is None
+
+
+def test_open_image_bytes_rejects_path_traversal(tmp_path, monkeypatch):
+    monkeypatch.setattr(files_mod, "IMAGES_DIR", tmp_path)
+    assert files_mod.open_image_bytes("../etc/passwd") is None
+    assert files_mod.open_image_bytes("foo/bar") is None
+    assert files_mod.open_image_bytes("ABCDEF12" * 4) is None  # uppercase
+    assert files_mod.open_image_bytes("a" * 31) is None  # too short
+    assert files_mod.open_image_bytes("a" * 33) is None  # too long
