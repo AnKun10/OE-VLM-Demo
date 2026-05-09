@@ -5,3 +5,5 @@ ssh -L 5173:localhost:5173 -L 8000:localhost:8000 -p <SSH_PORT> root@<VAST_IP>
 touch .env
 nano .env
 vim .env # i edit, esc + wq: save and quit
+
+vllm serve Qwen/Qwen3-VL-8B-Instruct --port 8003 --max-model-len 32768 --limit-mm-per-prompt '{"image": 4}'

@@ -11,7 +11,7 @@ vllm serve Qwen/Qwen3-VL-8B-Instruct \
     --port 8003 \
     --gpu-memory-utilization 0.85 \
     --max-model-len 32768 \
-    --limit-mm-per-prompt image=4
+    --limit-mm-per-prompt '{"image": 4}'
 ```
 
 ### SSH tunnel (from local dev machine)
@@ -27,9 +27,7 @@ ssh -L 5173:localhost:5173 \
 
 ### Port allocation
 
-- `8001` — Qwen 2.5-VL 3B (existing)
-- `8002` — reserved (freed by LLaVA removal)
-- `8003` — Qwen3-VL 8B (this change)
+- `8003` — Qwen3-VL 8B
 
 ## Deferred Quirks
 
