@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.models.vlm import VLMManager
-from app.routers import chat
+from app.routers import chat, files
 
 
 @asynccontextmanager
@@ -32,6 +32,7 @@ app.add_middleware(
 )
 
 app.include_router(chat.router)
+app.include_router(files.router)
 
 app.mount("/images", StaticFiles(directory="images"), name="images")
 
