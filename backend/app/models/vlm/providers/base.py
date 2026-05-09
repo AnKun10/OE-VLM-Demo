@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import AsyncIterator
 
 
 class VLMProvider(ABC):
@@ -16,11 +17,26 @@ class VLMProvider(ABC):
         return {}
 
     @abstractmethod
-    def generate(
+    def stream(
+        self,
+        messages: list[dict],
+        max_tokens: int,
+        temperature: float,
+    ) -> AsyncIterator[str]:
+        """Yield text deltas as they arrive from the upstream model.
+
+        Implementations must be async generators (use `async def` + `yield`).
+        """
+        ...
+
+    async def generate(
         self,
         messages: list[dict],
         max_tokens: int,
         temperature: float,
     ) -> str:
-        """Send messages and return the model's text response."""
-        ...
+        """Convenience: collect stream into a single trimmed string."""
+        chunks: list[str] = []
+        async for delta in self.stream(messages, max_tokens, temperature):
+            chunks.append(delta)
+        return "".join(chunks).strip()
