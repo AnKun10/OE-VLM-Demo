@@ -6,4 +6,6 @@ pillow
 openai
 pyyaml
 pytest
+pytest-asyncio
+python-multipart
 vllm
