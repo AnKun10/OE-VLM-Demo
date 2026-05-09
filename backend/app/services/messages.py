@@ -33,3 +33,60 @@ def build_openai_messages(msgs: Iterable) -> list[dict]:
             parts.append({"type": "text", "text": m.text})
         out.append({"role": m.role, "content": parts})
     return out
+
+
+def enforce_image_cap(messages: list[dict], max_images: int = 4) -> list[dict]:
+    """If the total number of `image_url` parts across `messages` exceeds
+    `max_images`, replace the oldest image parts with a text placeholder
+    until the count fits. Messages whose content collapses to no parts are
+    rewritten to have the placeholder string as content (vLLM rejects
+    empty content arrays).
+    """
+    total = 0
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, list):
+            total += sum(1 for p in c if isinstance(p, dict) and p.get("type") == "image_url")
+
+    if total <= max_images:
+        return messages
+
+    to_drop = total - max_images
+    out: list[dict] = []
+    for m in messages:
+        c = m.get("content")
+        if not isinstance(c, list) or to_drop == 0:
+            out.append(m)
+            continue
+        had_original_text = any(
+            isinstance(p, dict) and p.get("type") == "text" for p in c
+        )
+        new_parts: list[dict] = []
+        for p in c:
+            if (
+                to_drop > 0
+                and isinstance(p, dict)
+                and p.get("type") == "image_url"
+            ):
+                # Replace this oldest image with a text placeholder.
+                if new_parts and new_parts[-1].get("type") == "text":
+                    # Coalesce with previous text segment.
+                    new_parts[-1]["text"] = (
+                        new_parts[-1]["text"].rstrip() + " " + PLACEHOLDER
+                    ).strip()
+                else:
+                    new_parts.append({"type": "text", "text": PLACEHOLDER})
+                to_drop -= 1
+            else:
+                new_parts.append(p)
+
+        has_images = any(p.get("type") == "image_url" for p in new_parts)
+        if not has_images and not had_original_text:
+            # Lone-image message fully replaced: collapse to placeholder string
+            # so vLLM doesn't see an empty or text-array-only content.
+            joined = " ".join(p["text"] for p in new_parts).strip()
+            out.append({"role": m["role"], "content": joined or PLACEHOLDER})
+        else:
+            out.append({"role": m["role"], "content": new_parts})
+
+    return out

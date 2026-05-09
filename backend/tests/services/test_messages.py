@@ -84,3 +84,74 @@ def test_multiple_attachments_become_multiple_image_parts(tmp_path, monkeypatch)
     assert len(image_parts) == 2
     text_parts = [p for p in out[0]["content"] if p["type"] == "text"]
     assert text_parts == [{"type": "text", "text": "two pics"}]
+
+
+from app.services.messages import PLACEHOLDER, enforce_image_cap
+
+
+def _img_part(label="x"):
+    return {"type": "image_url", "image_url": {"url": f"data:img,{label}"}}
+
+
+def _text_part(text):
+    return {"type": "text", "text": text}
+
+
+def test_enforce_image_cap_under_limit_unchanged():
+    messages = [
+        {"role": "user", "content": [_img_part("a"), _text_part("hi")]},
+        {"role": "assistant", "content": "ack"},
+    ]
+    out = enforce_image_cap(messages, max_images=4)
+    assert out == messages
+
+
+def test_enforce_image_cap_drops_oldest_first():
+    messages = [
+        {"role": "user", "content": [_img_part("a"), _text_part("first")]},
+        {"role": "user", "content": [_img_part("b"), _img_part("c"),
+                                      _img_part("d"), _img_part("e"),
+                                      _text_part("now")]},
+    ]
+    out = enforce_image_cap(messages, max_images=4)
+    # First image (oldest) should be replaced by placeholder; b/c/d/e remain.
+    first_msg_parts = out[0]["content"]
+    assert all(p.get("type") != "image_url" for p in first_msg_parts)
+    assert any(p.get("type") == "text" and PLACEHOLDER in p["text"]
+               for p in first_msg_parts)
+    second_msg_parts = out[1]["content"]
+    image_parts = [p for p in second_msg_parts if p["type"] == "image_url"]
+    assert len(image_parts) == 4
+
+
+def test_enforce_image_cap_replaces_lone_image_with_placeholder_string():
+    """Single image_url + no text → content becomes placeholder string,
+    not an empty array.
+    """
+    messages = [
+        {"role": "user", "content": [_img_part("a")]},  # lone image
+        {"role": "user", "content": [_img_part("b"), _img_part("c"),
+                                      _img_part("d"), _img_part("e"),
+                                      _text_part("ok")]},
+    ]
+    out = enforce_image_cap(messages, max_images=4)
+    assert out[0]["content"] == PLACEHOLDER  # collapsed to string
+
+
+def test_enforce_image_cap_eight_images_in_one_message_reduced_to_four():
+    parts = [_img_part(str(i)) for i in range(8)] + [_text_part("end")]
+    messages = [{"role": "user", "content": parts}]
+    out = enforce_image_cap(messages, max_images=4)
+    new_parts = out[0]["content"]
+    image_parts = [p for p in new_parts if p["type"] == "image_url"]
+    text_parts = [p for p in new_parts if p["type"] == "text"]
+    assert len(image_parts) == 4
+    # Placeholder text + original "end" — adjacent text segments may coalesce
+    assert any(PLACEHOLDER in p["text"] for p in text_parts)
+    assert any("end" in p["text"] for p in text_parts)
+
+
+def test_enforce_image_cap_passes_through_text_only_messages():
+    messages = [{"role": "user", "content": "no images here"}]
+    out = enforce_image_cap(messages, max_images=4)
+    assert out == messages
