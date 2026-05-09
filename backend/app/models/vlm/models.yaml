@@ -11,6 +11,8 @@ models:
     temperature: 0                    # Sampling temperature (0 = deterministic)
     min_pixels: 200704                # Qwen processor lower bound (optional — falls back to config.py)
     max_pixels: 1605632               # Qwen processor upper bound (optional — falls back to config.py)
+    capabilities:
+      vision: true                    # Frontend gates image attachment on this flag
 
   - id: "gpt-5.4-mini"               # Unique identifier — sent by frontend to select this model
     name: "GPT-5.4 Mini (OpenAI)"    # Display name shown in the frontend dropdown
@@ -22,3 +24,5 @@ models:
       You are a helpful AI assistant!
     max_tokens: 256                   # Maximum tokens for model generation
     temperature: 0                    # Sampling temperature (0 = deterministic)
+    capabilities:
+      vision: false                   # Frontend hides image attach button for this model
