@@ -92,3 +92,63 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         return ChatResponse(reply="Xin lỗi, không thể xử lý yêu cầu.")
 
     return ChatResponse(reply=reply)
+
+
+# --- New streaming endpoint -------------------------------------------------
+
+class Attachment(BaseModel):
+    id: str
+
+
+class ChatMessageWithAttachments(BaseModel):
+    role: Literal["user", "assistant"]
+    text: str = ""
+    attachments: list[Attachment] = []
+
+
+class ChatStreamRequest(BaseModel):
+    messages: list[ChatMessageWithAttachments]
+    model_id: str | None = None
+
+
+def _sse_delta(delta: str) -> str:
+    return f"data: {json.dumps({'delta': delta, 'done': False}, ensure_ascii=False)}\n\n"
+
+
+def _sse_done() -> str:
+    return f"data: {json.dumps({'delta': '', 'done': True})}\n\n"
+
+
+def _sse_error(kind: str, message: str) -> str:
+    return f"data: {json.dumps({'error': kind, 'message': message}, ensure_ascii=False)}\n\n"
+
+
+@router.post("/chat/stream")
+async def chat_stream(request: Request, body: ChatStreamRequest):
+    manager = request.app.state.vlm_manager
+
+    async def event_stream():
+        try:
+            openai_messages = build_openai_messages(body.messages)
+            openai_messages = enforce_image_cap(openai_messages, max_images=4)
+        except FileNotFoundError as exc:
+            yield _sse_error("file_missing", str(exc))
+            return
+
+        try:
+            async for delta in manager.stream(body.model_id, openai_messages):
+                if await request.is_disconnected():
+                    return
+                yield _sse_delta(delta)
+            yield _sse_done()
+        except ConnectionError as exc:
+            yield _sse_error("connection", str(exc))
+        except BadRequestError as exc:
+            yield _sse_error("bad_request", str(exc))
+        except RuntimeError as exc:
+            yield _sse_error("bad_request", str(exc))
+        except Exception:
+            traceback.print_exc()
+            yield _sse_error("internal", "Internal error")
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
