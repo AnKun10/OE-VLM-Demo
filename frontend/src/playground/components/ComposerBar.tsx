@@ -150,6 +150,7 @@ export function ComposerBar(props: ComposerBarProps) {
 
   const canSend =
     !disabled &&
+    !streaming &&
     !uploading &&
     (visionEnabled || attachments.length === 0) &&
     (text.trim().length > 0 || attachments.length > 0) &&
