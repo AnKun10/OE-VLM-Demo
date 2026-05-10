@@ -102,3 +102,42 @@ class VLMManager:
         async for delta in self.stream(model_id, messages):
             chunks.append(delta)
         return "".join(chunks).strip()
+
+    async def stream_raw(
+        self,
+        model_id: str | None,
+        messages: list[dict],
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> AsyncIterator[str]:
+        """Stream tokens from the provider WITHOUT prepending the model's
+        per-yaml system prompt. The caller supplies its own messages list
+        verbatim. Used by the image compressor (caption + router calls have
+        their own system prompts).
+        """
+        provider, _ = self._resolve(model_id)
+        async for delta in provider.stream(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        ):
+            yield delta
+
+    async def generate_raw(
+        self,
+        model_id: str | None,
+        messages: list[dict],
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> str:
+        """Non-streaming wrapper around `stream_raw`. Returns the joined+
+        stripped text for the call."""
+        chunks: list[str] = []
+        async for delta in self.stream_raw(
+            model_id, messages,
+            max_tokens=max_tokens, temperature=temperature,
+        ):
+            chunks.append(delta)
+        return "".join(chunks).strip()
