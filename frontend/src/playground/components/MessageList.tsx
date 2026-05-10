@@ -3,6 +3,8 @@ import { Sparkles } from "lucide-react";
 import { MessageBubble, type MessageActions } from "./MessageBubble";
 import type { Message } from "../types";
 
+const AT_BOTTOM_TOLERANCE = 32;
+
 export function MessageList({
   messages,
   actions,
@@ -10,18 +12,39 @@ export function MessageList({
   messages: Message[];
   actions: MessageActions;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const lastMsgKey = messages.at(-1)?.id + "@" + (messages.at(-1)?.text.length ?? 0);
+  const wasAtBottomRef = useRef(true);
+  const lastMsgKey =
+    messages.at(-1)?.id + "@" + (messages.at(-1)?.text.length ?? 0);
+
+  // Attach scroll listener to the parent overflow-y-auto container in
+  // PlaygroundPage so we can track whether the user is at the bottom.
+  useEffect(() => {
+    const scrollEl = containerRef.current?.parentElement;
+    if (!scrollEl) return;
+    const onScroll = () => {
+      wasAtBottomRef.current =
+        scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight <
+        AT_BOTTOM_TOLERANCE;
+    };
+    scrollEl.addEventListener("scroll", onScroll, { passive: true });
+    // Initial seed.
+    onScroll();
+    return () => scrollEl.removeEventListener("scroll", onScroll);
+  }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (wasAtBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [lastMsgKey]);
 
   const lastIsStreaming = messages.at(-1)?.status === "streaming";
   const lastIsEmpty = lastIsStreaming && (messages.at(-1)?.text ?? "").length === 0;
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+    <div ref={containerRef} className="max-w-3xl mx-auto px-4 py-8 space-y-6">
       {messages.map((m, i) => (
         <MessageBubble
           key={m.id}

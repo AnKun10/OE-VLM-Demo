@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Pencil, RefreshCw, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -6,6 +7,28 @@ import "highlight.js/styles/github.css";
 import { SafeLink } from "./SafeLink";
 import { InlineEditor } from "./InlineEditor";
 import type { Message } from "../types";
+
+function AttachmentImg({ url, alt }: { url: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div
+        className="w-full h-full flex items-center justify-center text-[11px] text-center px-2"
+        style={{ background: "#f3f4f6", color: "#6b7280" }}
+      >
+        Ảnh đã hết hạn
+      </div>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt={alt}
+      className="w-full h-full object-cover"
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 const ACCENT = "#015e9f";
 const TEXT_PRIMARY = "#111827";
@@ -44,7 +67,7 @@ function UserBubble({
                 className="overflow-hidden"
                 style={{ width: 120, height: 120, borderRadius: 12, border: `1px solid ${BORDER}` }}
               >
-                <img src={a.url} alt={a.originalName} className="w-full h-full object-cover" />
+                <AttachmentImg url={a.url} alt={a.originalName} />
               </div>
             ))}
           </div>
@@ -70,7 +93,7 @@ function UserBubble({
               className="overflow-hidden"
               style={{ width: 120, height: 120, borderRadius: 12, border: `1px solid ${BORDER}` }}
             >
-              <img src={a.url} alt={a.originalName} className="w-full h-full object-cover" />
+              <AttachmentImg url={a.url} alt={a.originalName} />
             </div>
           ))}
         </div>
