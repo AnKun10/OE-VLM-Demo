@@ -36,11 +36,14 @@ def build_openai_messages(msgs: Iterable) -> list[dict]:
 
 
 def enforce_image_cap(messages: list[dict], max_images: int = 4) -> list[dict]:
-    """If the total number of `image_url` parts across `messages` exceeds
-    `max_images`, replace the oldest image parts with a text placeholder
-    until the count fits. Messages whose content collapses to no parts are
-    rewritten to have the placeholder string as content (vLLM rejects
-    empty content arrays).
+    """Defensive backstop: cap the total `image_url` parts at `max_images` by
+    replacing the OLDEST images with a dumb placeholder string.
+
+    From Phase 5 onward this is a fallback for when `ImageCompressorEngine`
+    crashes or is disabled — the compressor strips history images down to ≤1
+    pixel-bearing turn before the request reaches here, so under normal
+    operation this function is a no-op. Default `max_images=4` matches vLLM's
+    `--limit-mm-per-prompt image=4` hard cap.
     """
     total = 0
     for m in messages:

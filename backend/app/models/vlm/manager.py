@@ -141,3 +141,28 @@ class VLMManager:
         ):
             chunks.append(delta)
         return "".join(chunks).strip()
+
+    def compressor_config(self) -> dict | None:
+        """Return the `compressor:` block from models.yaml, or None if absent
+        or malformed. Validates that referenced model ids exist.
+        """
+        yaml_path = Path(__file__).parent / "models.yaml"
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+
+        block = config.get("compressor")
+        if not block:
+            return None
+
+        caption_id = block.get("caption_model_id")
+        router_id = block.get("router_model_id")
+        if not caption_id or caption_id not in self.providers:
+            print(f"[VLMManager] compressor.caption_model_id '{caption_id}' "
+                  f"not in providers; compressor disabled.")
+            return None
+        if not router_id or router_id not in self.providers:
+            print(f"[VLMManager] compressor.router_model_id '{router_id}' "
+                  f"not in providers; compressor disabled.")
+            return None
+
+        return block

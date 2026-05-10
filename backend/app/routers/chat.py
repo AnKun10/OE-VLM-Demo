@@ -123,6 +123,10 @@ def _sse_error(kind: str, message: str) -> str:
     return f"data: {json.dumps({'error': kind, 'message': message}, ensure_ascii=False)}\n\n"
 
 
+def _sse_status(message: str, done: bool) -> str:
+    return f"data: {json.dumps({'type': 'status', 'message': message, 'done': done}, ensure_ascii=False)}\n\n"
+
+
 @router.post("/chat/stream")
 async def chat_stream(request: Request, body: ChatStreamRequest):
     manager = request.app.state.vlm_manager
@@ -130,16 +134,47 @@ async def chat_stream(request: Request, body: ChatStreamRequest):
     async def event_stream():
         try:
             openai_messages = build_openai_messages(body.messages)
-            openai_messages = enforce_image_cap(openai_messages, max_images=4)
         except FileNotFoundError as exc:
             yield _sse_error("file_missing", str(exc))
             return
 
+        # Phase 5: image-aware compressor. Engine self-catches its own errors
+        # and returns a passthrough on failure. The outer try/except below is a
+        # second-line guard for unexpected iteration-level issues only.
+        engine = getattr(request.app.state, "compressor_engine", None)
+        thinking_md = ""
+        if engine is not None:
+            try:
+                from app.services.image_compressor.types import (
+                    CompressionResult, StatusEvent,
+                )
+                async for event in engine.compress(openai_messages):
+                    if isinstance(event, StatusEvent):
+                        yield _sse_status(event.message, event.done)
+                    elif isinstance(event, CompressionResult):
+                        openai_messages = event.messages
+                        thinking_md = event.thinking_md
+                        break
+            except Exception:
+                traceback.print_exc()
+
+        # Safety net: even if compressor passed-through with too many images
+        # (or there's no compressor at all), enforce vLLM's hard limit of 4.
+        openai_messages = enforce_image_cap(openai_messages, max_images=4)
+
         try:
+            first_emitted = False
             async for delta in manager.stream(body.model_id, openai_messages):
                 if await request.is_disconnected():
                     return
+                if not first_emitted and thinking_md:
+                    yield _sse_delta(thinking_md)
+                first_emitted = True
                 yield _sse_delta(delta)
+            if not first_emitted and thinking_md:
+                # The model produced zero deltas but we still want the
+                # thinking-log visible (e.g., model 200 with empty body).
+                yield _sse_delta(thinking_md)
             yield _sse_done()
         except ConnectionError as exc:
             yield _sse_error("connection", str(exc))
