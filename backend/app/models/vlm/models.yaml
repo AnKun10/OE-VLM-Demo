@@ -26,3 +26,14 @@ models:
     temperature: 0                    # Sampling temperature (0 = deterministic)
     capabilities:
       vision: false                   # Frontend hides image attach button for this model
+
+compressor:
+  caption_model_id: "qwen3-vl-8b-vllm"
+  router_model_id: "qwen3-vl-8b-vllm"
+  cache_db_path: "backend/data/img_captions.db"
+  caption_max_tokens: 80
+  router_max_tokens: 60
+  caption_timeout_s: 30
+  router_timeout_s: 15
+  router_failopen_keep: true
+  webui_internal_base: "http://127.0.0.1:8000"

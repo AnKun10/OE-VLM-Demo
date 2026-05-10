@@ -8,3 +8,4 @@ pyyaml
 pytest
 pytest-asyncio
 python-multipart
+aiosqlite
