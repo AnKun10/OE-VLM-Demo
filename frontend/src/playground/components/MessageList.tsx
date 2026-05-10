@@ -1,9 +1,15 @@
 import { useEffect, useRef } from "react";
 import { Sparkles } from "lucide-react";
-import { MessageBubble } from "./MessageBubble";
+import { MessageBubble, type MessageActions } from "./MessageBubble";
 import type { Message } from "../types";
 
-export function MessageList({ messages }: { messages: Message[] }) {
+export function MessageList({
+  messages,
+  actions,
+}: {
+  messages: Message[];
+  actions: MessageActions;
+}) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastMsgKey = messages.at(-1)?.id + "@" + (messages.at(-1)?.text.length ?? 0);
 
@@ -16,8 +22,13 @@ export function MessageList({ messages }: { messages: Message[] }) {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
-      {messages.map((m) => (
-        <MessageBubble key={m.id} msg={m} />
+      {messages.map((m, i) => (
+        <MessageBubble
+          key={m.id}
+          msg={m}
+          isLast={i === messages.length - 1}
+          actions={actions}
+        />
       ))}
       {lastIsEmpty && (
         <div className="flex gap-3">
