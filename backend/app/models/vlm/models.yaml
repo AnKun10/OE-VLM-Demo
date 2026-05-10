@@ -3,7 +3,7 @@ models:
     name: "Qwen3-VL 8B (vLLM)"       # Display name shown in the frontend dropdown
     provider: "qwen_vllm"             # Provider class to use (maps to providers/ module)
     base_url: "http://localhost:8003/v1"  # SSH-tunneled endpoint to remote vLLM server
-    model_id: "Qwen/Qwen3-VL-8B-Instruct"  # Model name sent in API requests
+    model_id: "qwen3-vl-8b"           # Model name sent in API requests (matches vLLM --served-model-name)
     api_key_env: null                 # .env variable holding the API key (null = no auth, uses "none")
     system_prompt: >                  # System message prepended to every conversation
       You are a helpful AI assistant!

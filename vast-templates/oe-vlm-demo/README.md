@@ -111,7 +111,7 @@ Then SSH in and re-run the onstart manually:
 ```bash
 ssh -p <SSH_PORT> root@<VAST_IP>
 OE_ENABLE_BACKEND=true OE_ENABLE_FRONTEND=true \
-  bash /var/lib/vast/onstart.sh
+  bash /root/onstart.sh
 ```
 
 (Path may differ; the on-start script is the file you pasted in step 1.)
@@ -123,7 +123,7 @@ OE_ENABLE_BACKEND=true OE_ENABLE_FRONTEND=true \
 ```bash
 ssh -p <SSH_PORT> root@<VAST_IP>
 tmux kill-session -t backend
-bash /var/lib/vast/onstart.sh
+bash /root/onstart.sh
 ```
 
 The script's idempotent guards skip vLLM relaunch (already serving), skip
@@ -134,14 +134,14 @@ session.
 
 ```bash
 tmux kill-session -t frontend
-bash /var/lib/vast/onstart.sh
+bash /root/onstart.sh
 ```
 
 ### Restart only vLLM
 
 ```bash
 tmux kill-session -t vllm
-bash /var/lib/vast/onstart.sh
+bash /root/onstart.sh
 ```
 
 ### Pull latest code without restart
@@ -152,7 +152,7 @@ git pull
 # Backend reload is automatic via uvicorn --reload? No — we run without --reload.
 # Restart explicitly:
 tmux kill-session -t backend
-bash /var/lib/vast/onstart.sh
+bash /root/onstart.sh
 # Vite picks up frontend changes via HMR — no restart needed for src/ edits.
 ```
 

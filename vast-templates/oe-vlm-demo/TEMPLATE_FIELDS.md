@@ -61,6 +61,7 @@ Paste each row as a Key/Value pair. Order does not matter.
 | `VLLM_ARGS` | `--max-model-len 32768 --gpu-memory-utilization 0.85 --trust-remote-code --dtype float16 --served-model-name qwen3-vl-8b --enforce-eager --download-dir /workspace/.hf_cache --limit-mm-per-prompt {"image":4}` |
 | `AUTO_PARALLEL` | `false` |
 | `HF_HOME` | `/workspace/.hf_cache` |
+| `HF_TOKEN` | (optional) `hf_xxxxx` — your HuggingFace token. Anonymous downloads are rate-limited; with a token, weights download faster (saves ~5–15 min on cold boot). Get one at https://huggingface.co/settings/tokens. |
 | `OE_REPO_URL` | `https://github.com/<your-user>/OE-VLM-Demo.git` |
 | `OE_BRANCH` | `dev/AnKun10` |
 | `OE_BACKEND_PORT` | `8000` |

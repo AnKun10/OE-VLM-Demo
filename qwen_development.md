@@ -9,6 +9,7 @@ Companion to `qwen3_vl_design.md`. Covers vast.ai operations, deferred quirks, f
 ```bash
 vllm serve Qwen/Qwen3-VL-8B-Instruct \
     --port 8003 \
+    --served-model-name qwen3-vl-8b \
     --gpu-memory-utilization 0.85 \
     --max-model-len 32768 \
     --limit-mm-per-prompt '{"image": 4}'
