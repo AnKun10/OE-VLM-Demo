@@ -18,7 +18,7 @@ from app.services.image_compressor.prompts import (
     ROUTER_SYSTEM_PROMPT,
     ROUTER_USER_TEMPLATE,
 )
-from app.services.image_compressor.types import Scanned
+from app.services.image_compressor.types import CompressionResult, Scanned, StatusEvent
 
 log = logging.getLogger("image_compressor")
 
@@ -142,3 +142,160 @@ class ImageCompressorEngine:
             await self.cache.put_many(new_rows)
 
         return out
+
+    def _estimate_image_tokens(self, raw: bytes) -> int:
+        """Cheap heuristic: ~800 tokens minimum, +1 token per 800 bytes."""
+        return max(800, len(raw) // 800)
+
+    def _build_thinking_log(
+        self, *,
+        n_images: int, n_misses: int, decision_label: str,
+        captions_used: list[tuple[str, str]],
+        user_text: Optional[str],
+        route_reason: Optional[str],
+        tokens_saved: int,
+    ) -> str:
+        """Build the <details>-wrapped reasoning markdown shown above the
+        assistant reply."""
+        lines = [
+            "<details>",
+            f"<summary>🧠 Image compressor reasoning ({n_images} ảnh, "
+            f"{n_misses} caption mới, {decision_label})</summary>",
+            "",
+            "**Step 1 — Image scan**",
+            f"- Tổng {n_images} ảnh; cache miss: {n_misses}, "
+            f"hit: {n_images - n_misses}",
+            "",
+        ]
+        if captions_used:
+            lines.append("**Step 2 — Captions in use**")
+            for h_short, cap in captions_used:
+                lines.append(f"- `{h_short}` → \"{cap[:120]}\"")
+            lines.append("")
+        if user_text is not None:
+            lines.append("**Step 3 — Router**")
+            lines.append(f"- User: \"{user_text[:200]}\"")
+            lines.append(f"- {decision_label}")
+            if route_reason:
+                lines.append(f"- Reason: *{route_reason}*")
+            lines.append("")
+        lines.append("**Step 4 — Rewrite**")
+        if tokens_saved > 0:
+            lines.append(f"- Token estimate saved: ~{tokens_saved}")
+        else:
+            lines.append("- Images preserved; no tokens saved")
+        lines.append("</details>")
+        lines.append("")
+        return "\n".join(lines)
+
+    async def compress(self, messages: list[dict]):
+        """Async generator. Yields zero or more StatusEvents while working,
+        then exactly one terminal CompressionResult. Self-catches every
+        internal exception → on failure, yields passthrough(messages, '')."""
+        try:
+            async for ev in self._compress_impl(messages):
+                yield ev
+        except Exception as e:
+            log.exception("compressor crash; falling through to passthrough: %s", e)
+            yield CompressionResult(messages=messages, thinking_md="")
+
+    async def _compress_impl(self, messages: list[dict]):
+        from app.services.image_compressor.messages import (
+            find_latest_image_turn, has_images, hash_image_url,
+            iter_image_parts, rewrite_messages, text_of,
+        )
+
+        url_list = list(iter_image_parts(messages))
+        if not url_list:
+            yield CompressionResult(messages=messages, thinking_md="")
+            return
+
+        # Hash each image (fail-soft).
+        scanned: list[Scanned] = []
+        for msg_idx, c_idx, url in url_list:
+            try:
+                h, raw = await hash_image_url(url, self.webui_internal_base)
+                scanned.append((msg_idx, c_idx, url, h, raw))
+            except Exception as e:
+                log.warning("hash skipped url=%s err=%s", url[:60], e)
+
+        if not scanned:
+            yield CompressionResult(messages=messages, thinking_md="")
+            return
+
+        # Decide keep_idx BEFORE captioning so we only caption images we need.
+        last_msg = messages[-1] if messages else None
+        if last_msg and has_images(last_msg):
+            keep_idx: Optional[int] = len(messages) - 1
+            decision_label = "kept new upload"
+            user_text_for_log: Optional[str] = None
+            route_reason: Optional[str] = None
+            # Only caption images from non-kept turns.
+            scanned_to_caption = [s for s in scanned if s[0] != keep_idx]
+        else:
+            scanned_to_caption = scanned
+            keep_idx = None  # determined after routing below
+            decision_label = ""
+            user_text_for_log = None
+            route_reason = None
+
+        # Cache lookup → count misses for the status banner + thinking log.
+        existing = await self.cache.get_many([h for *_, h, _ in scanned_to_caption])
+        n_misses = sum(1 for s in scanned_to_caption if s[3] not in existing)
+        if n_misses > 0:
+            yield StatusEvent(
+                message=f"🖼️ Captioning {n_misses} new image(s)..."
+            )
+
+        captions_by_url = await self.ensure_captions(scanned_to_caption)
+
+        # For the router path, finish deciding keep_idx now.
+        if last_msg and not has_images(last_msg):
+            latest_idx = find_latest_image_turn(messages)
+            if latest_idx is None:
+                # No usable image turn → pure-text history; nothing to compress.
+                yield CompressionResult(messages=messages, thinking_md="")
+                return
+            yield StatusEvent(message="🧭 Routing: do we need pixels?")
+            captions_for_router = [
+                captions_by_url.get(u, "(no caption)")
+                for (mi, _, u, _, _) in scanned if mi == latest_idx
+            ]
+            user_text_for_log = text_of(last_msg) if last_msg else ""
+            decision, route_reason = await self.route(
+                user_text_for_log, captions_for_router,
+            )
+            if decision:
+                keep_idx = latest_idx
+                decision_label = "🎯 Router: keep images"
+            else:
+                keep_idx = None
+                decision_label = "🎯 Router: drop images"
+            yield StatusEvent(message=decision_label)
+
+        # Token-saving estimate.
+        if keep_idx is None:
+            tokens_saved = sum(
+                self._estimate_image_tokens(raw) for *_, raw in scanned
+            )
+        else:
+            tokens_saved = sum(
+                self._estimate_image_tokens(raw)
+                for (mi, _, _, _, raw) in scanned if mi != keep_idx
+            )
+
+        new_messages = rewrite_messages(messages, keep_idx, captions_by_url)
+
+        captions_used = [
+            (h[:8], captions_by_url.get(url, "(no caption)"))
+            for (_, _, url, h, _) in scanned
+        ]
+        thinking_md = self._build_thinking_log(
+            n_images=len(scanned), n_misses=n_misses,
+            decision_label=decision_label, captions_used=captions_used,
+            user_text=user_text_for_log, route_reason=route_reason,
+            tokens_saved=tokens_saved,
+        )
+
+        yield StatusEvent(message="✅ Compressor done", done=True)
+        yield CompressionResult(messages=new_messages, thinking_md=thinking_md)
