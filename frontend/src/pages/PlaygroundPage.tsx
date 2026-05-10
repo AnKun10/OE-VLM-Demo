@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   MessageSquare,
@@ -9,6 +9,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { MessageList } from "../playground/components/MessageList";
+import type { MessageActions } from "../playground/components/MessageBubble";
 import { ComposerBar } from "../playground/components/ComposerBar";
 import { ModelDropdown } from "../playground/components/ModelDropdown";
 import { Toaster } from "../playground/components/Toaster";
@@ -66,32 +67,42 @@ function PlaygroundInner() {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<AttachmentRef[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [overrideModelId, setOverrideModelId] = useState<string>("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Latest dispatch reference for use inside async callbacks (avoids stale closures
+  // when streamingId / activeId changes mid-stream).
+  const dispatchRef = useRef(dispatch);
+  dispatchRef.current = dispatch;
 
   const activeId = state.activeId!;
   const active = state.conversations[activeId]!;
   const messages = active.messages;
 
-  // When models load and the active conversation has no modelId yet, set it.
+  // Once /api/models loads, default the active conversation's modelId
+  // to the first vision-capable model if none is set yet.
   useEffect(() => {
     if (!active.modelId && models.length > 0) {
-      // Mutate via a synthetic action: rename + set modelId. For Phase 2,
-      // just dispatch SELECT (no-op) and rely on render-time fallback.
-      // Phase 3+ may add a SET_MODEL action.
+      dispatch({
+        type: "SET_MODEL",
+        conversationId: activeId,
+        modelId: models[0].id,
+      });
     }
-  }, [models, active.modelId]);
+  }, [models, active.modelId, activeId]);
 
   const effectiveModelId =
-    overrideModelId || active.modelId || models[0]?.id || "";
+    active.modelId || models[0]?.id || "";
   const activeModel = models.find((m) => m.id === effectiveModelId);
   const visionEnabled = activeModel?.capabilities.vision ?? true;
 
+  const isStreaming = useMemo(
+    () => messages.some((m) => m.status === "streaming"),
+    [messages],
+  );
+
   const historyImageCount = useMemo(
     () =>
-      messages.reduce(
-        (n, m) => n + (m.attachments?.length ?? 0),
-        0,
-      ),
+      messages.reduce((n, m) => n + (m.attachments?.length ?? 0), 0),
     [messages],
   );
 
@@ -105,6 +116,7 @@ function PlaygroundInner() {
     });
     setText("");
     setAttachments([]);
+    setEditingId(null);
   }
 
   function selectConversation(id: string) {
@@ -112,14 +124,51 @@ function PlaygroundInner() {
     dispatch({ type: "SELECT_CONVERSATION", id });
     setText("");
     setAttachments([]);
+    setEditingId(null);
   }
 
   function deleteConversation(id: string) {
     dispatch({ type: "DELETE_CONVERSATION", id });
     if (Object.keys(state.conversations).length <= 1) {
-      // After delete this would be empty; create a fresh one.
       newConversation();
     }
+  }
+
+  /**
+   * Reusable streaming runner. Caller is responsible for having dispatched
+   * ADD_USER_MESSAGE + ADD_ASSISTANT_PLACEHOLDER before calling. We pass
+   * `wireMessages` (the OpenAI-shaped history including the user message)
+   * + `assistantId` (the placeholder we'll fill).
+   */
+  async function runStream(
+    wireMessages: ChatMessageWithAttachments[],
+    assistantId: string,
+    convId: string,
+  ) {
+    await send({
+      messages: wireMessages,
+      modelId: effectiveModelId || null,
+      onDelta: (delta) =>
+        dispatchRef.current({
+          type: "APPEND_DELTA",
+          conversationId: convId,
+          messageId: assistantId,
+          delta,
+        }),
+      onDone: () =>
+        dispatchRef.current({
+          type: "MARK_DONE",
+          conversationId: convId,
+          messageId: assistantId,
+        }),
+      onError: (e) =>
+        dispatchRef.current({
+          type: "MARK_ERROR",
+          conversationId: convId,
+          messageId: assistantId,
+          errorKind: e.errorKind,
+        }),
+    });
   }
 
   async function handleSend() {
@@ -138,9 +187,7 @@ function PlaygroundInner() {
       conversationId: activeId,
       message: userMsg,
     });
-    if (
-      messages.filter((m) => m.role === "user").length === 0
-    ) {
+    if (messages.filter((m) => m.role === "user").length === 0) {
       const titleSrc = trimmed || "Hình ảnh";
       dispatch({
         type: "RENAME_TITLE",
@@ -160,31 +207,91 @@ function PlaygroundInner() {
     setAttachments([]);
 
     const wire = toWireMessages([...messages, userMsg]);
-    await send({
-      messages: wire,
-      modelId: effectiveModelId || null,
-      onDelta: (delta) =>
-        dispatch({
-          type: "APPEND_DELTA",
-          conversationId: activeId,
-          messageId: assistantId,
-          delta,
-        }),
-      onDone: () =>
-        dispatch({
-          type: "MARK_DONE",
-          conversationId: activeId,
-          messageId: assistantId,
-        }),
-      onError: (e) =>
-        dispatch({
-          type: "MARK_ERROR",
-          conversationId: activeId,
-          messageId: assistantId,
-          errorKind: e.errorKind,
-        }),
+    await runStream(wire, assistantId, activeId);
+  }
+
+  function handleStop() {
+    abort();
+    // Mark the streaming placeholder as stopped. Find the last streaming msg.
+    const streamingMsg = [...messages].reverse().find((m) => m.status === "streaming");
+    if (streamingMsg) {
+      dispatch({
+        type: "MARK_STOPPED",
+        conversationId: activeId,
+        messageId: streamingMsg.id,
+      });
+    }
+  }
+
+  async function handleRegenerate() {
+    if (isStreaming) return;
+    // Pop the last assistant message and re-stream from the prior context.
+    dispatch({ type: "POP_LAST_ASSISTANT", conversationId: activeId });
+    // Dispatch reads the post-pop messages on the next render; we need the
+    // computed message list here, so build it from the current `messages`.
+    const remaining = messages.slice(0, -1);
+    if (remaining.length === 0 || remaining.at(-1)?.role !== "user") return;
+    const assistantId = uid();
+    dispatch({
+      type: "ADD_ASSISTANT_PLACEHOLDER",
+      conversationId: activeId,
+      messageId: assistantId,
+      now: Date.now(),
+    });
+    const wire = toWireMessages(remaining);
+    await runStream(wire, assistantId, activeId);
+  }
+
+  async function handleSaveEdit(messageId: string, newText: string) {
+    setEditingId(null);
+    dispatch({
+      type: "EDIT_USER_AND_TRUNCATE",
+      conversationId: activeId,
+      messageId,
+      newText,
+    });
+    // Build the new message list manually (reducer change isn't visible until
+    // re-render): take messages up to and including the edited one, replace text.
+    const idx = messages.findIndex((m) => m.id === messageId);
+    if (idx === -1) return;
+    const editedMsg: Message = { ...messages[idx], text: newText };
+    const truncated = [...messages.slice(0, idx), editedMsg];
+    const assistantId = uid();
+    dispatch({
+      type: "ADD_ASSISTANT_PLACEHOLDER",
+      conversationId: activeId,
+      messageId: assistantId,
+      now: Date.now(),
+    });
+    const wire = toWireMessages(truncated);
+    await runStream(wire, assistantId, activeId);
+  }
+
+  function handleStartEdit(messageId: string) {
+    if (isStreaming) return;
+    setEditingId(messageId);
+  }
+
+  function handleCancelEdit() {
+    setEditingId(null);
+  }
+
+  function handleModelChange(modelId: string) {
+    dispatch({
+      type: "SET_MODEL",
+      conversationId: activeId,
+      modelId,
     });
   }
+
+  const messageActions: MessageActions = {
+    isStreaming,
+    editingId,
+    onStartEdit: handleStartEdit,
+    onSaveEdit: handleSaveEdit,
+    onCancelEdit: handleCancelEdit,
+    onRegenerate: handleRegenerate,
+  };
 
   const sortedConvs = Object.values(state.conversations).sort(
     (a, b) => b.updatedAt - a.updatedAt,
@@ -308,7 +415,7 @@ function PlaygroundInner() {
         </header>
 
         <div className="flex-1 overflow-y-auto">
-          <MessageList messages={messages} />
+          <MessageList messages={messages} actions={messageActions} />
         </div>
 
         <ComposerBar
@@ -324,13 +431,7 @@ function PlaygroundInner() {
             <ModelDropdown
               models={models}
               value={effectiveModelId}
-              onChange={(id) => {
-                // Phase 2: store override in local state so the wire request
-                // honours the user's choice within the session.
-                // Phase 3 will add a SET_MODEL reducer action that persists
-                // the choice into Conversation.modelId.
-                setOverrideModelId(id);
-              }}
+              onChange={handleModelChange}
             />
           }
           visionEnabled={visionEnabled}
@@ -340,6 +441,8 @@ function PlaygroundInner() {
               : null
           }
           historyImageCount={historyImageCount}
+          streaming={isStreaming}
+          onStop={handleStop}
         />
       </div>
 
