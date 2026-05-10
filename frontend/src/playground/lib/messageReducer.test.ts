@@ -191,4 +191,199 @@ describe("conversationsReducer", () => {
     expect(s.conversations.c1.messages.at(-1)!.text).toBe("");
     expect(s.conversations.c1.messages.at(-1)!.status).toBe("done");
   });
+
+  it("SET_MODEL updates conversation modelId; no-op for unknown id", () => {
+    let s = withConv(initialState(), "c1", "m-old");
+    s = conversationsReducer(s, {
+      type: "SET_MODEL",
+      conversationId: "c1",
+      modelId: "m-new",
+    });
+    expect(s.conversations.c1.modelId).toBe("m-new");
+
+    // Unknown conversation → no change.
+    const before = s;
+    s = conversationsReducer(s, {
+      type: "SET_MODEL",
+      conversationId: "does-not-exist",
+      modelId: "x",
+    });
+    expect(s).toBe(before);
+  });
+
+  it("T3.1 — MARK_STOPPED updates status to stopped without touching text", () => {
+    let s = withConv(initialState(), "c1", "m");
+    s = conversationsReducer(s, {
+      type: "ADD_ASSISTANT_PLACEHOLDER",
+      conversationId: "c1",
+      messageId: "a1",
+      now: 3000,
+    });
+    s = conversationsReducer(s, {
+      type: "APPEND_DELTA",
+      conversationId: "c1",
+      messageId: "a1",
+      delta: "partial reply",
+    });
+    s = conversationsReducer(s, {
+      type: "MARK_STOPPED",
+      conversationId: "c1",
+      messageId: "a1",
+    });
+    const last = s.conversations.c1.messages.at(-1)!;
+    expect(last.status).toBe("stopped");
+    expect(last.text).toBe("partial reply"); // text untouched
+  });
+
+  it("T3.2 — POP_LAST_ASSISTANT removes last message iff role=assistant", () => {
+    let s = withConv(initialState(), "c1", "m");
+    // Welcome + 1 user + 1 assistant
+    s = conversationsReducer(s, {
+      type: "ADD_USER_MESSAGE",
+      conversationId: "c1",
+      message: { id: "u1", role: "user", text: "hi", createdAt: 2000 },
+    });
+    s = conversationsReducer(s, {
+      type: "ADD_ASSISTANT_PLACEHOLDER",
+      conversationId: "c1",
+      messageId: "a1",
+      now: 3000,
+    });
+    s = conversationsReducer(s, {
+      type: "MARK_DONE",
+      conversationId: "c1",
+      messageId: "a1",
+    });
+    expect(s.conversations.c1.messages.length).toBe(3); // welcome + u1 + a1
+
+    s = conversationsReducer(s, {
+      type: "POP_LAST_ASSISTANT",
+      conversationId: "c1",
+    });
+    expect(s.conversations.c1.messages.length).toBe(2);
+    expect(s.conversations.c1.messages.at(-1)!.id).toBe("u1");
+
+    // Now last is user → POP is a no-op.
+    const before = s;
+    s = conversationsReducer(s, {
+      type: "POP_LAST_ASSISTANT",
+      conversationId: "c1",
+    });
+    expect(s).toBe(before);
+  });
+
+  it("T3.3 — EDIT_USER_AND_TRUNCATE replaces text and drops everything after", () => {
+    let s = withConv(initialState(), "c1", "m");
+    // welcome + u1 + a1 + u2 + a2 + u3
+    s = conversationsReducer(s, {
+      type: "ADD_USER_MESSAGE",
+      conversationId: "c1",
+      message: { id: "u1", role: "user", text: "first", createdAt: 1 },
+    });
+    s = conversationsReducer(s, {
+      type: "ADD_ASSISTANT_PLACEHOLDER",
+      conversationId: "c1",
+      messageId: "a1",
+      now: 2,
+    });
+    s = conversationsReducer(s, { type: "MARK_DONE", conversationId: "c1", messageId: "a1" });
+    s = conversationsReducer(s, {
+      type: "ADD_USER_MESSAGE",
+      conversationId: "c1",
+      message: { id: "u2", role: "user", text: "second", createdAt: 3 },
+    });
+    s = conversationsReducer(s, {
+      type: "ADD_ASSISTANT_PLACEHOLDER",
+      conversationId: "c1",
+      messageId: "a2",
+      now: 4,
+    });
+    s = conversationsReducer(s, { type: "MARK_DONE", conversationId: "c1", messageId: "a2" });
+    s = conversationsReducer(s, {
+      type: "ADD_USER_MESSAGE",
+      conversationId: "c1",
+      message: { id: "u3", role: "user", text: "third", createdAt: 5 },
+    });
+    expect(s.conversations.c1.messages.length).toBe(6);
+
+    // Edit u2 → "second EDITED": should keep welcome+u1+a1+u2(edited), drop a2+u3.
+    s = conversationsReducer(s, {
+      type: "EDIT_USER_AND_TRUNCATE",
+      conversationId: "c1",
+      messageId: "u2",
+      newText: "second EDITED",
+    });
+    expect(s.conversations.c1.messages.length).toBe(4);
+    expect(s.conversations.c1.messages.at(-1)!.id).toBe("u2");
+    expect(s.conversations.c1.messages.at(-1)!.text).toBe("second EDITED");
+  });
+
+  it("A3.4 — EDIT msg#1 of 5-msg conv → 4 subsequent dropped", () => {
+    let s = withConv(initialState(), "c1", "m");
+    s = conversationsReducer(s, {
+      type: "ADD_USER_MESSAGE",
+      conversationId: "c1",
+      message: { id: "u1", role: "user", text: "msg1", createdAt: 1 },
+    });
+    // 4 more messages after u1
+    for (let i = 2; i <= 5; i++) {
+      s = conversationsReducer(s, {
+        type: "ADD_USER_MESSAGE",
+        conversationId: "c1",
+        message: { id: `u${i}`, role: "user", text: `msg${i}`, createdAt: i },
+      });
+    }
+    expect(s.conversations.c1.messages.length).toBe(6); // welcome + u1..u5
+
+    s = conversationsReducer(s, {
+      type: "EDIT_USER_AND_TRUNCATE",
+      conversationId: "c1",
+      messageId: "u1",
+      newText: "msg1 edited",
+    });
+    expect(s.conversations.c1.messages.length).toBe(2); // welcome + u1(edited)
+    expect(s.conversations.c1.messages.at(-1)!.text).toBe("msg1 edited");
+  });
+
+  it("T3.4 / A3.9 — EDIT_USER_AND_TRUNCATE preserves attachments of edited message", () => {
+    let s = withConv(initialState(), "c1", "m");
+    const four = [
+      { id: "a1", url: "/a", mime: "image/png", originalName: "a" },
+      { id: "a2", url: "/b", mime: "image/png", originalName: "b" },
+      { id: "a3", url: "/c", mime: "image/png", originalName: "c" },
+      { id: "a4", url: "/d", mime: "image/png", originalName: "d" },
+    ];
+    s = conversationsReducer(s, {
+      type: "ADD_USER_MESSAGE",
+      conversationId: "c1",
+      message: {
+        id: "u1",
+        role: "user",
+        text: "pics",
+        attachments: four,
+        createdAt: 1,
+      },
+    });
+    s = conversationsReducer(s, {
+      type: "EDIT_USER_AND_TRUNCATE",
+      conversationId: "c1",
+      messageId: "u1",
+      newText: "pics EDITED",
+    });
+    const last = s.conversations.c1.messages.at(-1)!;
+    expect(last.text).toBe("pics EDITED");
+    expect(last.attachments).toEqual(four);
+  });
+
+  it("EDIT_USER_AND_TRUNCATE on missing messageId is a no-op", () => {
+    let s = withConv(initialState(), "c1", "m");
+    const before = s;
+    s = conversationsReducer(s, {
+      type: "EDIT_USER_AND_TRUNCATE",
+      conversationId: "c1",
+      messageId: "does-not-exist",
+      newText: "x",
+    });
+    expect(s).toBe(before);
+  });
 });

@@ -20,6 +20,7 @@ export type Action =
     }
   | { type: "DELETE_CONVERSATION"; id: string }
   | { type: "SELECT_CONVERSATION"; id: string }
+  | { type: "SET_MODEL"; conversationId: string; modelId: string }
   | { type: "ADD_USER_MESSAGE"; conversationId: string; message: Message }
   | {
       type: "ADD_ASSISTANT_PLACEHOLDER";
@@ -34,11 +35,19 @@ export type Action =
       delta: string;
     }
   | { type: "MARK_DONE"; conversationId: string; messageId: string }
+  | { type: "MARK_STOPPED"; conversationId: string; messageId: string }
   | {
       type: "MARK_ERROR";
       conversationId: string;
       messageId: string;
       errorKind: ErrorKind;
+    }
+  | { type: "POP_LAST_ASSISTANT"; conversationId: string }
+  | {
+      type: "EDIT_USER_AND_TRUNCATE";
+      conversationId: string;
+      messageId: string;
+      newText: string;
     }
   | { type: "RENAME_TITLE"; conversationId: string; title: string };
 
@@ -123,6 +132,12 @@ export function conversationsReducer(
       return state.conversations[action.id]
         ? { ...state, activeId: action.id }
         : state;
+    case "SET_MODEL":
+      return patchConversation(state, action.conversationId, (conv) => ({
+        ...conv,
+        modelId: action.modelId,
+        updatedAt: Date.now(),
+      }));
     case "ADD_USER_MESSAGE":
       return patchConversation(state, action.conversationId, (conv) => ({
         ...conv,
@@ -157,6 +172,13 @@ export function conversationsReducer(
         action.messageId,
         (m) => ({ ...m, status: "done" }),
       );
+    case "MARK_STOPPED":
+      return patchMessage(
+        state,
+        action.conversationId,
+        action.messageId,
+        (m) => ({ ...m, status: "stopped" }),
+      );
     case "MARK_ERROR":
       return patchMessage(
         state,
@@ -164,6 +186,43 @@ export function conversationsReducer(
         action.messageId,
         (m) => ({ ...m, status: "error", errorKind: action.errorKind }),
       );
+    case "POP_LAST_ASSISTANT": {
+      const conv = state.conversations[action.conversationId];
+      if (!conv) return state;
+      const last = conv.messages.at(-1);
+      if (!last || last.role !== "assistant") return state;
+      return {
+        ...state,
+        conversations: {
+          ...state.conversations,
+          [action.conversationId]: {
+            ...conv,
+            messages: conv.messages.slice(0, -1),
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    }
+    case "EDIT_USER_AND_TRUNCATE": {
+      const conv = state.conversations[action.conversationId];
+      if (!conv) return state;
+      const idx = conv.messages.findIndex((m) => m.id === action.messageId);
+      if (idx === -1) return state;
+      const target = conv.messages[idx];
+      const edited: Message = { ...target, text: action.newText };
+      const truncated = [...conv.messages.slice(0, idx), edited];
+      return {
+        ...state,
+        conversations: {
+          ...state.conversations,
+          [action.conversationId]: {
+            ...conv,
+            messages: truncated,
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    }
     case "RENAME_TITLE":
       return patchConversation(state, action.conversationId, (conv) => ({
         ...conv,
