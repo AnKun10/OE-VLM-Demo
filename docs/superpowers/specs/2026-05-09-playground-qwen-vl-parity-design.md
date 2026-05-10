@@ -57,8 +57,14 @@ PlaygroundPage (React)
      └─ fetch POST /api/chat/stream { messages, model_id }
         └─ FastAPI async handler
            ├─ build_openai_messages: resolve attachments → base64 data URI
-           ├─ enforce_image_cap: total images ≤ 4, drop oldest with placeholder
-           ├─ VLMManager.stream(model_id, messages)
+           ├─ ImageCompressorEngine.compress(messages, model_id)         ← Phase 5
+           │  ├─ hash + cache lookup per image; caption misses (parallel)
+           │  ├─ if latest turn text-only with prior images → router LLM call
+           │  ├─ rewrite_messages: strip pixels except keep_idx → "[Past image #N: caption]"
+           │  └─ yields StatusEvents → handler emits SSE {type:"status",...}
+           │     yields CompressionResult.thinking_md → handler prepends as 1st delta
+           ├─ enforce_image_cap (safety net, max=4): only kicks in if compressor passthrough
+           ├─ VLMManager.stream(model_id, rewritten_messages)
            │  └─ QwenVLLMProvider.stream
            │     ├─ apply transforms (strip_image_tokens, inject_pixel_bounds)
            │     └─ AsyncOpenAI client.chat.completions.create(stream=True)
@@ -66,8 +72,11 @@ PlaygroundPage (React)
            ├─ wrap chunks → SSE: data: {"delta":"...","done":false}\n\n
            └─ on client disconnect → break loop → cleanup async generator
 PlaygroundPage
-  └─ ReadableStream reader → sseParser → reducer APPEND_DELTA
-  └─ on done/error → reducer MARK_DONE / MARK_ERROR
+  └─ ReadableStream reader → sseParser → routes by event shape:
+      ├─ {delta} → reducer APPEND_DELTA
+      ├─ {type:"status", message, done} → setStatus (transient banner, not persisted)
+      ├─ {done:true} → reducer MARK_DONE
+      └─ {error} → reducer MARK_ERROR
 ```
 
 ### File upload flow
@@ -412,6 +421,201 @@ def enforce_image_cap(messages: list[dict], max_images: int = 4) -> list[dict]:
 | `POST /api/chat/stream` | vLLM 500 mid-stream | 200 | partial deltas + SSE `error: internal` |
 | `POST /api/chat/stream` | vLLM 400 (token cap, etc.) | 200 | SSE `error: bad_request` with vLLM message |
 
+### B.7 Image-aware compressor (Phase 5)
+
+Port of `open-webui/vast-templates/qwen3-vl-8b/functions/qwenvl_image_compress.py`. Lives at `backend/app/services/image_compressor/`. Replaces dumb `enforce_image_cap` truncation with caption-aware history compression: every image in history gets a Vietnamese caption (cached by SHA-256 of image bytes), and a router LLM decides whether the *current* user turn needs pixels or whether captions alone suffice. Result: conversations can have arbitrarily many images while sending ≤ 1 pixel-bearing turn to the model.
+
+**Module layout:**
+
+```
+backend/app/services/image_compressor/
+├── __init__.py        # re-exports ImageCompressorEngine
+├── cache.py           # CaptionCache (aiosqlite, WAL, keyed by sha256)
+├── prompts.py         # CAPTION_SYSTEM_PROMPT, ROUTER_SYSTEM_PROMPT (VN)
+├── types.py           # StatusEvent, CompressionResult dataclasses
+├── messages.py        # iter_image_parts, find_latest_image_turn, text_of, has_images, rewrite_messages, hash_image_url
+└── engine.py          # ImageCompressorEngine.compress() orchestrator
+```
+
+**Cache schema** (mirrors reference exactly):
+
+```sql
+CREATE TABLE IF NOT EXISTS captions (
+    img_hash    TEXT PRIMARY KEY,
+    caption     TEXT NOT NULL,
+    model       TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    bytes_size  INTEGER,
+    user_id     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_created ON captions(created_at);
+```
+
+`PRAGMA journal_mode = WAL`, `synchronous = NORMAL`, `busy_timeout = 5000`. Default path: `backend/data/img_captions.db` (created on first run; `data/` added to `.gitignore`).
+
+**Cache API** (`cache.py`):
+
+```python
+class CaptionCache:
+    async def init() -> None
+    async def get(h: str) -> Optional[str]
+    async def get_many(hashes: list[str]) -> dict[str, str]
+    async def put(h, caption, model, bytes_size=None, user_id=None) -> None
+    async def put_many(items: list[tuple[str, str, str, Optional[int], Optional[str]]]) -> None
+```
+
+`put_many` uses `INSERT OR IGNORE` so concurrent puts of the same hash are safe (last-writer wins is irrelevant — all writers wrote the same caption for the same hash).
+
+**Helpers** (`messages.py`):
+
+```python
+def has_images(msg: dict) -> bool
+def iter_image_parts(msgs: list[dict]) -> Iterator[tuple[int, int, str]]
+def find_latest_image_turn(msgs: list[dict]) -> Optional[int]
+def text_of(msg: dict) -> str
+async def hash_image_url(url: str, fetch_base: str, fetch_timeout_s=10) -> tuple[str, bytes]
+def rewrite_messages(msgs, keep_idx, captions_by_url) -> list[dict]
+```
+
+`hash_image_url` supports `data:`, absolute `http(s)://`, and relative paths (resolved against `fetch_base`, defaults to `http://127.0.0.1:8000` in dev). Returns `(sha256_hex, raw_bytes)`. `rewrite_messages` deep-copies, strips `image_url` parts at every turn except `keep_idx`, and appends `[Past image #N: <caption>]` text to the message's content (coalescing into the existing trailing text part if any).
+
+**Engine** (`engine.py`):
+
+```python
+# Type aliases (defined in types.py):
+# Scanned = tuple[int, int, str, str, bytes]  # (msg_idx, content_idx, url, sha256, raw_bytes)
+# StatusEvent: dataclass(message: str, done: bool = False)
+# CompressionResult: dataclass(messages: list[dict], thinking_md: str)
+# CompressionEvent = StatusEvent | CompressionResult
+
+class ImageCompressorEngine:
+    def __init__(
+        self, cache: CaptionCache, vlm_manager: VLMManager,
+        caption_model_id: str, router_model_id: str,
+        webui_internal_base: str = "http://127.0.0.1:8000",
+        caption_max_tokens: int = 80, router_max_tokens: int = 60,
+        caption_timeout_s: int = 30, router_timeout_s: int = 15,
+        router_failopen_keep: bool = True,
+    ): ...
+
+    async def caption_one(self, data_url: str) -> str
+    async def route(self, user_text: str, captions: list[str]) -> tuple[bool, str]
+    async def ensure_captions(self, scanned: list[Scanned]) -> dict[str, str]
+
+    async def compress(self, messages: list[dict]) -> AsyncIterator[CompressionEvent]:
+        """Yield zero or more StatusEvent values, then exactly one terminal CompressionResult.
+
+        Wrapped in an outer try/except: ANY exception inside the body is caught,
+        logged via `log.exception`, and the generator yields a passthrough
+        CompressionResult(messages=messages, thinking_md='') and returns.
+        Callers don't see exceptions from this method.
+        """
+```
+
+`caption_one` and `route` are implemented by calling `self.vlm_manager.generate(model_id, messages, max_tokens, temperature)` — the same path used by the existing legacy `/api/chat` endpoint. Reusing the manager (vs httpx in the reference) means provider-specific transforms (Qwen pixel-bound injection) apply automatically.
+
+`compress()` is an async generator. Sequence:
+
+1. Scan history with `iter_image_parts`. If 0 images → yield `CompressionResult(messages, thinking_md='')` and return (fast path, 0 LLM calls).
+2. Hash each image URL. Skip URLs that fail to hash (log warning, continue). If 0 hashable → return passthrough.
+3. Cache lookup with `get_many`. Compute `misses = [s for s in scanned if s.hash not in cache]`.
+4. If `misses`: yield `StatusEvent(message=f"🖼️ Captioning {len(misses)} new image(s)...")`.
+5. Run captioner via `asyncio.gather(caption_one(url) for url in misses)`. Each individual failure → that url omitted from `captions_by_url` (fail-open per image). Successes → `cache.put_many(...)`.
+6. Decide `keep_idx`:
+   - If latest user turn has images → `keep_idx = latest_idx` (decision_label `"kept new upload"`).
+   - Else (latest turn text-only): yield `StatusEvent("🧭 Routing: do we need pixels?")`, run `route(user_text, captions_for_latest)`. Result `(decision, reason)`. `decision=True` → keep latest image turn. `decision=False` → strip all images. Yield `StatusEvent(decision_label)`.
+   - Router exception → fall open to `router_failopen_keep` (default `True` = keep).
+7. Build thinking-log markdown via `_build_thinking_log(...)` (see prompts.py for template — same `<details><summary>🧠 Image compressor reasoning</summary>` shape as reference).
+8. `body_messages = rewrite_messages(messages, keep_idx, captions_by_url)`.
+9. Yield `StatusEvent(message="✅ Compressor done", done=True)`.
+10. Yield `CompressionResult(messages=body_messages, thinking_md=...)`.
+
+**Models config:** `backend/app/models/vlm/models.yaml` adds top-level `compressor:` key with two sub-keys:
+
+```yaml
+compressor:
+  caption_model_id: "qwen3-vl-8b-vllm"
+  router_model_id: "qwen3-vl-8b-vllm"
+```
+
+If absent, compressor is disabled (engine never instantiated; `chat_stream` skips compressor step entirely). When present, both ids must resolve to existing model entries; `VLMManager` validates this at startup.
+
+**Engine integration in `chat_stream` (`routers/chat.py`):**
+
+```python
+async def event_stream():
+    try:
+        openai_messages = build_openai_messages(body.messages)
+    except FileNotFoundError as exc:
+        yield _sse_error("file_missing", str(exc)); return
+
+    engine = getattr(request.app.state, "compressor_engine", None)
+    if engine is not None:
+        try:
+            thinking_md = ""
+            async for event in engine.compress(openai_messages):
+                if isinstance(event, StatusEvent):
+                    yield _sse_status(event.message, event.done)
+                else:  # CompressionResult
+                    openai_messages = event.messages
+                    thinking_md = event.thinking_md
+                    break
+            if thinking_md:
+                yield _sse_delta(thinking_md + "\n\n")
+        except Exception:
+            log.exception("compressor crash; falling through to safety net")
+            # openai_messages stays as built_openai_messages output
+    openai_messages = enforce_image_cap(openai_messages, max_images=4)
+
+    # ...rest of streaming as before
+```
+
+**Lifespan wiring (`app/main.py`):**
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    manager = VLMManager.from_yaml(...)
+    app.state.vlm_manager = manager
+    compressor_cfg = manager.compressor_config()  # reads "compressor" block from yaml
+    if compressor_cfg:
+        cache = CaptionCache(path="backend/data/img_captions.db")
+        await cache.init()
+        app.state.compressor_engine = ImageCompressorEngine(
+            cache=cache, vlm_manager=manager, **compressor_cfg
+        )
+    else:
+        app.state.compressor_engine = None
+    yield
+```
+
+**SSE protocol extension:**
+
+| Event shape | Persisted by frontend? |
+|------------|------------------------|
+| `{"delta":"...","done":false}` | ✅ (incl. compressor's thinking-log markdown which is part of first delta) |
+| `{"type":"status","message":"...","done":bool}` (Phase 5 new) | ❌ ephemeral toast |
+| `{"delta":"","done":true}` | terminal |
+| `{"error":"...","message":"..."}` | ✅ → errorKind |
+
+The frontend SSE parser added in Phase 1 already silently ignores unknown JSON shapes, so the new `{type:"status"}` event is backward-compatible with any Phase ≤ 4 frontend.
+
+**Cap policy (Phase 5):**
+
+- **Per-upload (frontend)**: `MAX_IMAGES = 4` per **user turn** (current message being composed). Relaxed from "per conversation total" — `lib/fileValidate.checkAttachmentCap` now counts only `attachments.length` of the in-flight composer, ignoring history.
+- **Safety net (backend)**: `enforce_image_cap(max_images=4)` retained as last-resort defense if compressor fails (engine exception → passthrough → safety net dumb-strips with `[ảnh ... lược bỏ]`). Both caps match vLLM's `--limit-mm-per-prompt image=4`.
+
+**Failure modes:**
+
+| Failure | Handler | Result |
+|---------|---------|--------|
+| `caption_one` raises (timeout, vLLM 5xx) | logged, omitted from `captions_by_url` | that image kept as bytes (fail-open per image) |
+| `route` raises or non-JSON | logged, fall back to `router_failopen_keep=True` | images preserved |
+| `cache.put_many` IntegrityError on duplicate hash | `INSERT OR IGNORE` swallows it | first writer's row stays |
+| `hash_image_url` fails (network 404 for relative path) | logged, scan entry skipped | that image untouched in body |
+| Engine `compress()` itself raises | caught at `chat_stream` level, log.exception, fall through to `enforce_image_cap` | dumb safety-net active; user gets degraded experience |
+| Router model_id and caption_model_id mismatch on startup | `VLMManager` raises `ValueError` at lifespan | server fails to start (clear error, fix yaml) |
+
 ## Frontend Design
 
 ### C.1 New dependencies
@@ -754,9 +958,129 @@ On hydrate, any message with `status === "streaming"` is coerced to `"stopped"`.
 - **Error bubble**: assistant message with `status: "error"` shows a red-tinted bubble with the error message and a "Thử lại" button (regenerate).
 - **Title auto-generation**: from the first user message text, truncated to 40 chars. If the first message has no text (image-only), title is `"Conversation YYYY-MM-DD HH:MM"`.
 
+### C.11 Status banner + thinking-log rendering (Phase 5)
+
+**Status banner** (ephemeral live progress from compressor):
+
+`StatusBanner.tsx` is a small pill rendered at the top of the chat scroll area (above `MessageList`). It accepts `{message: string, done: boolean} | null`. Renders nothing when `null`. When the user receives `{type:"status", done:false}` events, banner shows the latest message with a subtle spinner. When `done:true` arrives, spinner stops; banner auto-clears after 1500ms via `setTimeout` in a `useEffect`. New events arriving before timeout cancel it (via `useRef<number>` cleanup).
+
+State lives in `PlaygroundPage` as `useState<StatusBannerState | null>`. `useChatStream` accepts a new optional `onStatus` callback wired to `setStatus`. The banner is **not persisted** in the conversation reducer — reload clears it (correct behavior; status is transient).
+
+Visual shape (Tailwind):
+```
+[16px round pill, pale blue bg, soft border, 12px text]
+🖼️ Captioning 2 new image(s)...    [ subtle spinner ]
+```
+
+**Thinking-log rendering** (persisted in `msg.text`):
+
+The compressor prepends a Markdown `<details>` block to the first delta of the assistant message:
+
+```html
+<details>
+<summary>🧠 Image compressor reasoning (3 ảnh, 1 caption mới, 🎯 keep images)</summary>
+
+**Step 1 — Image scan**
+- Tổng 3 ảnh; cache miss: 1, hit: 2
+
+**Step 2 — Captions in use**
+- `a1b2c3d4` → "Một con mèo đen..."
+- `e5f6g7h8` → "Bãi biển hoàng hôn..."
+- `i9j0k1l2` → "Phòng khách..."
+
+**Step 3 — Router**
+- User: "Còn cái này thì sao?"
+- 🎯 Router: keep images
+- Reason: *Câu hỏi tham chiếu trực tiếp ảnh ("cái này")*
+
+**Step 4 — Rewrite**
+- Token estimate saved: ~2400
+</details>
+
+```
+
+`react-markdown` + `rehype-raw` (NEW dep, see below) renders `<details>` natively as a collapsed expandable block. Browser default styling is fine for v1; CSS tweaks deferred.
+
+**New frontend dep:** `rehype-raw@7.x`. `react-markdown` v9+ does not allow raw HTML by default; `rehype-raw` plugin enables it. Added to `MessageBubble`'s plugin chain after `rehype-highlight`.
+
+Security note: raw HTML in assistant content is supplied by **our own backend** (engine.py builds the `<details>` block). Model output is appended *after* the thinking block, so any model-injected HTML still passes through `rehype-raw` — but the existing Phase 2 safeguard (DOMPurify is NOT used, but XSS via raw `<script>` tags is mitigated because `rehype-raw` allows HTML elements but `react-markdown` strips event handlers and `<script>` is rendered as inert text by default per Browser HTML5 parser rules — verify in A5.9).
+
+**SSE parser changes** (`lib/sseParser.ts`):
+
+Add new event variant. Before:
+```ts
+type SSEEvent =
+  | { type: "delta"; delta: string }
+  | { type: "done" }
+  | { type: "error"; errorKind: ErrorKind; message?: string }
+  | { type: "parse_error" };
+```
+After:
+```ts
+type SSEEvent =
+  | { type: "delta"; delta: string }
+  | { type: "done" }
+  | { type: "error"; errorKind: ErrorKind; message?: string }
+  | { type: "status"; message: string; statusDone: boolean }   // NEW
+  | { type: "parse_error" };
+```
+
+`drainEvents` matches `payload.type === "status"` *before* the existing `done`/`error` branches and yields the new typed event. Unknown `type` values still fall through to delta/done/error/ignored as today.
+
+**chatStream changes** (`lib/chatStream.ts`):
+
+Add `onStatus?: (msg: string, done: boolean) => void` to `ChatStreamOptions`. In the event loop:
+
+```ts
+case "status":
+  options.onStatus?.(event.message, event.statusDone);
+  break;
+```
+
+`onDelta`, `onDone`, `onError`, `abort()` semantics unchanged. Status events do **not** count as "first chunk" — they don't reset the in-flight retry semantics from Phase 1.
+
+**PlaygroundPage wiring:**
+
+```tsx
+const [status, setStatus] = useState<{message: string; done: boolean} | null>(null);
+const statusTimeoutRef = useRef<number | null>(null);
+
+const onStatus = (message: string, done: boolean) => {
+  if (statusTimeoutRef.current) {
+    window.clearTimeout(statusTimeoutRef.current);
+    statusTimeoutRef.current = null;
+  }
+  setStatus({ message, done });
+  if (done) {
+    statusTimeoutRef.current = window.setTimeout(() => setStatus(null), 1500);
+  }
+};
+
+// ... in JSX, above <MessageList>:
+<StatusBanner status={status} />
+```
+
+`onStatus` is passed into the existing `useChatStream` hook. On stream abort/error/conversation switch, `setStatus(null)` clears the banner immediately.
+
+**Per-upload cap (`lib/fileValidate.ts`):**
+
+```ts
+// Phase 4 (current):
+export function checkAttachmentCap(currentInComposer: number, historyImageCount: number): boolean {
+  return currentInComposer + historyImageCount < MAX_IMAGES;
+}
+
+// Phase 5 (new):
+export function checkAttachmentCap(currentInComposer: number): boolean {
+  return currentInComposer < MAX_IMAGES;
+}
+```
+
+`historyImageCount` parameter removed; callers updated to pass only the in-flight composer count. `MAX_IMAGES` stays at 4. The `historyImageCount` prop on `ComposerBar` is removed (was used only by this cap). Phase 2/4 tests that asserted "history+composer ≥ 4 → block" need updating; Phase 5 plan documents the migration.
+
 ## Phase Breakdown
 
-Four phases. Each is independently shippable — no half-broken state at the boundary between phases. Tests are split into **Happy** (T-x.y), **Adversarial** (A-x.y), and **E2E** (E-x.y).
+Five phases. Each is independently shippable — no half-broken state at the boundary between phases. Tests are split into **Happy** (T-x.y), **Adversarial** (A-x.y), and **E2E** (E-x.y).
 
 ### Phase 1 — Backend foundation
 
@@ -962,11 +1286,80 @@ Four phases. Each is independently shippable — no half-broken state at the bou
 | A4.13 | First message has no text (image-only) → title falls back to `"Conversation YYYY-MM-DD HH:MM"`. |
 | A4.14 | Save edit on msg #1 of 5-msg convo → localStorage write count is 1, not 5 (debounce/batched effect). |
 
+### Phase 5 — Image-aware history compression + thinking log
+
+**Deliverables:**
+- `backend/app/services/image_compressor/` package: `cache.py` (aiosqlite WAL), `messages.py` (helpers), `prompts.py` (VN system prompts), `types.py` (StatusEvent/CompressionResult), `engine.py` (orchestrator).
+- `requirements.txt`: add `aiosqlite`.
+- `models.yaml`: add top-level `compressor:` block with `caption_model_id` + `router_model_id`.
+- `app/main.py` lifespan: instantiate cache + engine once if `compressor` block present; store on `app.state.compressor_engine`.
+- `routers/chat.py`: thread engine into `chat_stream`; emit new `{type:"status",...}` SSE events; prepend `<details>` thinking-log block to first model delta.
+- `services/messages.py`: `enforce_image_cap` retained as safety net; doc-comment updated to reflect Phase 5 role.
+- Frontend: `sseParser` recognizes `{type:"status"}`; `chatStream` `onStatus` callback; new `StatusBanner` component; `PlaygroundPage` wires status state; `fileValidate.checkAttachmentCap` simplified to per-upload only; `MessageBubble` markdown plugin chain gains `rehype-raw`.
+
+**Happy (pytest):**
+
+| ID | Description |
+|----|-------------|
+| T5.B1 | `CaptionCache.put` then `get` round-trips. `get_many` over 3 hashes (2 hit, 1 miss) returns dict of 2 hits. `put_many` with duplicate hash: second put leaves first's caption intact (`INSERT OR IGNORE`). |
+| T5.B2 | `iter_image_parts`: empty msgs → empty iter; str-content msg → empty; mixed parts (1 text + 2 image) → yields (idx, j, url) for each image. |
+| T5.B3 | `rewrite_messages`: `keep_idx=2` of 4-msg history with 1 image each → msgs 0,1,3 get `[Past image #1: cap]` text inserts; msg 2 untouched. Coalesces with trailing text part if present. |
+| T5.B4 | `hash_image_url`: `data:image/png;base64,iVBOR...` decoded → returns sha256 of decoded bytes. Bad scheme `ftp://...` → raises `ValueError`. Empty data URL → raises. |
+| T5.B5 | `engine.caption_one` with mocked AsyncOpenAI returning `"Một con mèo."` → returns `"Một con mèo."` trimmed. |
+| T5.B6 | `engine.route` with mocked AsyncOpenAI returning `'{"need_images":true,"reason":"câu hỏi đề cập ảnh"}'` → returns `(True, "câu hỏi đề cập ảnh")`. Returning malformed JSON → returns `(failopen_keep, "router failure: JSONDecodeError")`. |
+| T5.B7 | `engine.compress` integration: 3-image history, all cache misses → yields ≥1 StatusEvent then exactly 1 CompressionResult; rewritten messages have `[Past image #N:]` inserts. |
+| T5.B8 | `chat_stream` integration: 2 images in history, mocked compressor + provider → SSE stream contains `{type:"status"}` event then `{delta: "<details>..."}` then model deltas then `{done:true}`. |
+| T5.B9 | `chat_stream` no-image fast path: 0 images → 0 status events, 0 thinking-log delta; provider called immediately with original messages. |
+
+**Adversarial (pytest):**
+
+| ID | Description |
+|----|-------------|
+| A5.B1 | `caption_one` raises `httpx.TimeoutException` → `ensure_captions` omits that url; other captions complete; cache stores only successes. |
+| A5.B2 | `route` raises `httpx.HTTPError` → returns `(failopen_keep=True, "router failure: ...")`; images preserved. |
+| A5.B3 | Two concurrent `cache.put_many` with same hash → both complete without IntegrityError; cache has exactly 1 row. |
+| A5.B4 | `hash_image_url` for `/api/files/<id>` (relative) → fetches via `webui_internal_base`, returns `(sha256, bytes)`. 404 → raises. |
+| A5.B5 | Engine `compress()` itself raises (e.g., cache db locked indefinitely) → `chat_stream` catches and falls through; SSE stream still yields model deltas via dumb safety-net. |
+| A5.B6 | History has the same image bytes uploaded twice with different `id`s → `hash_image_url` returns same hash → cache hit on second; only 1 caption call total. |
+
+**Happy (Vitest):**
+
+| ID | Description |
+|----|-------------|
+| T5.1 | `sseParser` parses `{type:"status","message":"X","done":false}` → yields `{type:"status",message:"X",statusDone:false}`. |
+| T5.2 | `sseParser` parses `{type:"status","message":"Done","done":true}` → yields `{statusDone:true}`. |
+| T5.3 | `sseParser` ignores `{type:"future_unknown_shape"}` → no event yielded; following delta still parsed (forward-compat preserved). |
+| T5.4 | `chatStream.send` invokes `onStatus("X", false)` then `onStatus("Y", true)` when status events arrive in stream. |
+| T5.5 | `<StatusBanner status={{message:"X",done:false}} />` renders text "X" + spinner role. With `done:true`, after 1500ms `setStatus(null)` is called via callback prop (test with `vi.useFakeTimers`). |
+
+**Happy (Playwright):**
+
+| ID | Description |
+|----|-------------|
+| E5.1 | Send msg with 1 image → mock backend emits `{type:"status",message:"🖼️ Captioning..."}` → banner appears with text → mock emits `done:true` → banner clears within 2s. |
+| E5.2 | Mock backend prepends `<details><summary>🧠 Image compressor reasoning (1 ảnh, 1 caption mới, kept new upload)</summary>...</details>` to first delta + appends "Hello world." → assistant bubble renders summary text + answer; clicking summary expands details. |
+
+**Adversarial:**
+
+| ID | Description |
+|----|-------------|
+| A5.1 | (covered by T5.B5) Caption call fails for one image → that image kept (fail-open) — verify in chat_stream integration test. |
+| A5.2 | (covered by T5.B6) Router fails → `failopen_keep=True` → images preserved. |
+| A5.3 | (covered by T5.B3) Cache write contention: 2 concurrent `put_many` with same hash → INSERT OR IGNORE leaves one row. |
+| A5.4 | Conversation with cached images → click Regenerate → Network tab shows 0 caption calls (cache hit 100%). Manual Playwright assertion via `page.on("request", ...)`. |
+| A5.5 | Restart backend → cache file `backend/data/img_captions.db` survives → next request: cache hit. Manual smoke. |
+| A5.6 | User edits user-msg #1 (4 images) → truncate → next stream: same hashes → still uses cached captions. Manual smoke. |
+| A5.7 | SSE proxy buffering check: 3 status events 200ms apart → arrive on FE 200ms apart (not all at once). Manual smoke (DevTools EventStream tab). |
+| A5.8 | Thinking log `<details>` rendered collapsed by default (browser default). Click summary → expands. Verified in E5.2. |
+| A5.9 | XSS check: assistant content with raw `<script>alert(1)</script>` → does NOT execute (rehype-raw + html5-parser rules render as text or strip). Vitest with RTL. |
+| A5.10 | Per-upload cap: history has 4 images, composer empty → user attaches 4 more in current turn → all 4 attach (cap is per-turn now, not per-conversation). Manual smoke. |
+| A5.11 | Compressor disabled (no `compressor` block in `models.yaml`) → `chat_stream` skips compressor entirely → 0 status events, 0 thinking log; behavior identical to Phase 4. Pytest. |
+
 ### Cross-phase notes
 
-- **Test infra setup**: Phase 1 adds `pytest-asyncio` and `pytest-httpx` (or `respx`). Phase 2 sets up Vitest + jsdom. Phase 3 onward configures `@playwright/test` (Chromium project only).
+- **Test infra setup**: Phase 1 adds `pytest-asyncio` and `pytest-httpx` (or `respx`). Phase 2 sets up Vitest + jsdom. Phase 3 onward configures `@playwright/test` (Chromium project only). Phase 5 adds `aiosqlite` to backend deps.
 - **CI**: not configured in v1. Local pre-commit run is the contract.
-- **Smoke script**: `scripts/smoke_qwen3_vl.py` continues to work via `manager.generate()`. Run as acceptance for any phase that touches providers (1, 3 if reducer affects flow, 4 only if attachment resolution changes).
+- **Smoke script**: `scripts/smoke_qwen3_vl.py` continues to work via `manager.generate()`. Run as acceptance for any phase that touches providers (1, 3 if reducer affects flow, 4 only if attachment resolution changes, 5 changes request-shape preprocessing but `manager.generate` itself is unchanged).
 
 ## Risks
 
@@ -987,7 +1380,14 @@ Four phases. Each is independently shippable — no half-broken state at the bou
 | R13 | Backwards compat for `/api/chat` non-stream. | Route kept; rewritten to delegate to async `manager.generate()` wrapper. |
 | R14 | `delta.content = None` chunks (e.g., function-call placeholders). | Skipped (A1.18). |
 | R15 | HEIC images from iPhone fail browser/PIL decode. | Rejected at `fileValidate` (not in whitelist); user converts manually. |
-| R16 | Solo-dev time estimate: Phase 1 ~3–4 days, P2 ~2–3, P3 ~1–2, P4 ~2. ~8–11 days total. | Phase 1+2 alone is shippable as a v0.5 if needed sooner. |
+| R16 | Solo-dev time estimate: Phase 1 ~3–4 days, P2 ~2–3, P3 ~1–2, P4 ~2, P5 ~2–3. ~10–14 days total. | Phase 1+2 alone is shippable as a v0.5 if needed sooner. |
+| R17 | Caption call latency on cold cache (~3-5s/img × up to 4 imgs in parallel = 12-20s) blocks first model token. | `asyncio.gather` runs caption calls in parallel; status banner gives user real-time feedback; cache hits make subsequent turns instant. Document expected cold-start latency in README. |
+| R18 | aiosqlite WAL is single-writer; multi-uvicorn-worker deploy could see brief write blocking. | v1 documents single-worker deploy. If horizontal scale needed → switch to Postgres or per-process cache (loses dedup). |
+| R19 | Caption hallucination — captioner LLM may invent details not present in image. | System prompt explicitly constrains ("KHÔNG suy diễn cảm xúc, KHÔNG bịa"). Caption sloppy → answer sloppy; same risk as the reference filter. Caption is cheap enough that user can manually re-caption by deleting cache entry. |
+| R20 | Router LLM returns non-JSON despite `response_format={type:"json_object"}` (vLLM bug). | `try/except json.JSONDecodeError → fail-open keep_images`. Test A5.B2 covers. |
+| R21 | SSE buffering between Vite proxy and uvicorn could batch status events. | `StreamingResponse` + `text/event-stream` is chunked by uvicorn; Vite passes through. Manual smoke A5.7 verifies real-time delivery in dev. |
+| R22 | `rehype-raw` allowing raw HTML opens XSS surface if model output ever contains `<script>`. | Test A5.9 verifies inert rendering. Backend never echoes user-supplied HTML; only the engine's own `<details>` block is HTML. If future Phase 6 adds user-authored markdown that may contain HTML, revisit. |
+| R23 | Conversations from Phase 4 (pre-compressor) reload with >4 images → compressor first run hammers caption LLM. | Acceptable: one-time cost. Cache fills; subsequent runs hit. User can opt out via `compressor:` block removal. |
 
 ## Open Questions (defaults committed)
 
@@ -1003,6 +1403,10 @@ Four phases. Each is independently shippable — no half-broken state at the bou
 | Q8 | SSE format: JSON in `data:` or typed events? | JSON in `data:`. |
 | Q9 | Warn user when context approaches 28k chars? | No warning; surface 400 instead. |
 | Q10 | Orphan upload cleanup script? | None in v1; documented manual cleanup. |
+| Q11 | Compressor toggle UI (enable/disable, force-keep-all-images)? | Hardcoded to always-on. UI toggles deferred to potential Phase 6. |
+| Q12 | Caption cache eviction (TTL, max-size)? | None in v1. SQLite grows unbounded. Manual `DELETE FROM captions WHERE created_at < ?` if needed. |
+| Q13 | Smart cache-aware safety net (lookup caption before falling back to dumb placeholder)? | No. Safety net stays dumb. If compressor crashes regularly, fix compressor; do not duplicate logic. |
+| Q14 | Caption / router separate model from main model? | No. Default `qwen3-vl-8b-vllm` for both, configurable via `compressor.caption_model_id` + `compressor.router_model_id` in `models.yaml`. Future phases could add a smaller text-only router. |
 
 ## Acceptance Criteria
 
