@@ -49,7 +49,8 @@ export type Action =
       messageId: string;
       newText: string;
     }
-  | { type: "RENAME_TITLE"; conversationId: string; title: string };
+  | { type: "RENAME_TITLE"; conversationId: string; title: string }
+  | { type: "HYDRATE"; state: ConversationsState };
 
 export function initialState(): ConversationsState {
   return { schemaVersion: 1, conversations: {}, activeId: null };
@@ -229,5 +230,18 @@ export function conversationsReducer(
         title: action.title,
         updatedAt: Date.now(),
       }));
+    case "HYDRATE": {
+      const incoming = action.state;
+      const conversations: Record<string, Conversation> = {};
+      for (const [id, conv] of Object.entries(incoming.conversations)) {
+        conversations[id] = {
+          ...conv,
+          messages: conv.messages.map((m) =>
+            m.status === "streaming" ? { ...m, status: "stopped" as const } : m,
+          ),
+        };
+      }
+      return { ...incoming, conversations };
+    }
   }
 }

@@ -386,4 +386,87 @@ describe("conversationsReducer", () => {
     });
     expect(s).toBe(before);
   });
+
+  it("T4.2 — HYDRATE replaces state with payload", () => {
+    const initial = withConv(initialState(), "c1", "m");
+    const payload: ConversationsState = {
+      schemaVersion: 1,
+      activeId: "c-other",
+      conversations: {
+        "c-other": {
+          id: "c-other",
+          title: "Old",
+          modelId: "m",
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+    };
+    const out = conversationsReducer(initial, { type: "HYDRATE", state: payload });
+    expect(out.activeId).toBe("c-other");
+    expect(out.conversations["c-other"]).toBeDefined();
+    expect(out.conversations.c1).toBeUndefined();
+  });
+
+  it("A4.3 — HYDRATE coerces in-flight streaming → stopped while preserving text", () => {
+    const payload: ConversationsState = {
+      schemaVersion: 1,
+      activeId: "c1",
+      conversations: {
+        c1: {
+          id: "c1",
+          title: "T",
+          modelId: "m",
+          messages: [
+            { id: "u", role: "user", text: "hi", status: "done", createdAt: 1 },
+            {
+              id: "a",
+              role: "assistant",
+              text: "partial reply",
+              status: "streaming",
+              createdAt: 2,
+            },
+          ],
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      },
+    };
+    const out = conversationsReducer(initialState(), {
+      type: "HYDRATE",
+      state: payload,
+    });
+    const last = out.conversations.c1.messages.at(-1)!;
+    expect(last.status).toBe("stopped");
+    expect(last.text).toBe("partial reply");
+  });
+
+  it("T4.3 — RENAME_TITLE updates only the targeted conversation", () => {
+    let s = withConv(initialState(), "c1", "m");
+    s = withConv(s, "c2", "m");
+    s = conversationsReducer(s, {
+      type: "RENAME_TITLE",
+      conversationId: "c1",
+      title: "NEW",
+    });
+    expect(s.conversations.c1.title).toBe("NEW");
+    expect(s.conversations.c2.title).toBe("Cuộc hội thoại mới");
+  });
+
+  it("T4.4 — DELETE_CONVERSATION fallback: most-recent remaining or null", () => {
+    let s = withConv(initialState(), "c1", "m"); // updatedAt 1000
+    s = conversationsReducer(s, {
+      type: "NEW_CONVERSATION",
+      conversationId: "c2",
+      welcomeMessageId: "w2",
+      modelId: "m",
+      now: 5000,
+    });
+    expect(s.activeId).toBe("c2");
+    s = conversationsReducer(s, { type: "DELETE_CONVERSATION", id: "c2" });
+    expect(s.activeId).toBe("c1");
+    s = conversationsReducer(s, { type: "DELETE_CONVERSATION", id: "c1" });
+    expect(s.activeId).toBeNull();
+  });
 });
