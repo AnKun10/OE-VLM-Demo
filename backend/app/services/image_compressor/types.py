@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Union
 
 # (msg_idx, content_idx, url, sha256_hex, raw_bytes)
 Scanned = tuple[int, int, str, str, bytes]
@@ -20,4 +19,4 @@ class CompressionResult:
     thinking_md: str
 
 
-CompressionEvent = Union[StatusEvent, CompressionResult]
+CompressionEvent = StatusEvent | CompressionResult
