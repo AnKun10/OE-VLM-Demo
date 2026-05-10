@@ -167,4 +167,28 @@ describe("conversationsReducer", () => {
     expect(s.conversations.c1.title).toBe("New title");
     expect(s.conversations.c2.title).toBe("Cuộc hội thoại mới");
   });
+
+  it("APPEND_DELTA is a no-op when target message is not streaming", () => {
+    let s = withConv(initialState(), "c1", "m");
+    s = conversationsReducer(s, {
+      type: "ADD_ASSISTANT_PLACEHOLDER",
+      conversationId: "c1",
+      messageId: "a1",
+      now: 3000,
+    });
+    s = conversationsReducer(s, {
+      type: "MARK_DONE",
+      conversationId: "c1",
+      messageId: "a1",
+    });
+    // Late delta after MARK_DONE should NOT mutate text.
+    s = conversationsReducer(s, {
+      type: "APPEND_DELTA",
+      conversationId: "c1",
+      messageId: "a1",
+      delta: "late",
+    });
+    expect(s.conversations.c1.messages.at(-1)!.text).toBe("");
+    expect(s.conversations.c1.messages.at(-1)!.status).toBe("done");
+  });
 });

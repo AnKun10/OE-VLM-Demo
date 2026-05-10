@@ -66,6 +66,7 @@ function PlaygroundInner() {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<AttachmentRef[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [overrideModelId, setOverrideModelId] = useState<string>("");
 
   const activeId = state.activeId!;
   const active = state.conversations[activeId]!;
@@ -81,7 +82,7 @@ function PlaygroundInner() {
   }, [models, active.modelId]);
 
   const effectiveModelId =
-    active.modelId || models[0]?.id || "";
+    overrideModelId || active.modelId || models[0]?.id || "";
   const activeModel = models.find((m) => m.id === effectiveModelId);
   const visionEnabled = activeModel?.capabilities.vision ?? true;
 
@@ -324,13 +325,11 @@ function PlaygroundInner() {
               models={models}
               value={effectiveModelId}
               onChange={(id) => {
-                // Update active conversation's modelId by dispatching a
-                // synthetic rename (no SET_MODEL action in Phase 2). For
-                // now, just store the choice locally and update next
-                // NEW_CONVERSATION; the wire request uses effectiveModelId
-                // computed above, which falls back to first model.
-                // (Phase 3 will add a SET_MODEL action.)
-                console.info("[playground] model switch requested:", id);
+                // Phase 2: store override in local state so the wire request
+                // honours the user's choice within the session.
+                // Phase 3 will add a SET_MODEL reducer action that persists
+                // the choice into Conversation.modelId.
+                setOverrideModelId(id);
               }}
             />
           }

@@ -148,7 +148,7 @@ export function conversationsReducer(
         state,
         action.conversationId,
         action.messageId,
-        (m) => ({ ...m, text: m.text + action.delta }),
+        (m) => (m.status === "streaming" ? { ...m, text: m.text + action.delta } : m),
       );
     case "MARK_DONE":
       return patchMessage(
