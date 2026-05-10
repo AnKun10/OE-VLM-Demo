@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   MessageSquare,
@@ -14,12 +14,8 @@ import { ComposerBar } from "../playground/components/ComposerBar";
 import { ModelDropdown } from "../playground/components/ModelDropdown";
 import { Toaster } from "../playground/components/Toaster";
 import { useChatStream } from "../playground/hooks/useChatStream";
+import { useConversations } from "../playground/hooks/useConversations";
 import { useModels } from "../playground/hooks/useModels";
-import {
-  conversationsReducer,
-  initialState,
-  type Action,
-} from "../playground/lib/messageReducer";
 import type {
   AttachmentRef,
   ChatMessageWithAttachments,
@@ -52,16 +48,7 @@ function toWireMessages(messages: Message[]): ChatMessageWithAttachments[] {
 }
 
 function PlaygroundInner() {
-  const [state, dispatch] = useReducer(conversationsReducer, undefined, () => {
-    const init = initialState();
-    return conversationsReducer(init, {
-      type: "NEW_CONVERSATION",
-      conversationId: uid(),
-      welcomeMessageId: "w" + uid(),
-      modelId: "",
-      now: Date.now(),
-    } as Action);
-  });
+  const { state, dispatch } = useConversations();
   const { models } = useModels();
   const { send, abort } = useChatStream();
   const [text, setText] = useState("");
@@ -74,24 +61,42 @@ function PlaygroundInner() {
   const dispatchRef = useRef(dispatch);
   dispatchRef.current = dispatch;
 
-  const activeId = state.activeId!;
-  const active = state.conversations[activeId]!;
-  const messages = active.messages;
+  // First-mount guard: if storage was empty, create a default conversation.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current) return;
+    if (Object.keys(state.conversations).length === 0) {
+      seededRef.current = true;
+      dispatch({
+        type: "NEW_CONVERSATION",
+        conversationId: uid(),
+        welcomeMessageId: "w" + uid(),
+        modelId: "",
+        now: Date.now(),
+      });
+    } else {
+      seededRef.current = true;
+    }
+  }, [state.conversations, dispatch]);
+
+  const activeId = state.activeId;
+  const active = activeId ? state.conversations[activeId] ?? null : null;
+  const messages = active?.messages ?? [];
 
   // Once /api/models loads, default the active conversation's modelId
   // to the first vision-capable model if none is set yet.
   useEffect(() => {
-    if (!active.modelId && models.length > 0) {
+    if (active && !active.modelId && activeId && models.length > 0) {
       dispatch({
         type: "SET_MODEL",
         conversationId: activeId,
         modelId: models[0].id,
       });
     }
-  }, [models, active.modelId, activeId]);
+  }, [models, active, activeId, dispatch]);
 
   const effectiveModelId =
-    active.modelId || models[0]?.id || "";
+    active?.modelId || models[0]?.id || "";
   const activeModel = models.find((m) => m.id === effectiveModelId);
   const visionEnabled = activeModel?.capabilities.vision ?? true;
 
@@ -121,6 +126,18 @@ function PlaygroundInner() {
 
   function selectConversation(id: string) {
     abort();
+    // If the previous conversation has an in-flight streaming placeholder,
+    // mark it as stopped so it doesn't stay "streaming" forever (A4.9).
+    if (active) {
+      const streaming = active.messages.find((m) => m.status === "streaming");
+      if (streaming) {
+        dispatch({
+          type: "MARK_STOPPED",
+          conversationId: active.id,
+          messageId: streaming.id,
+        });
+      }
+    }
     dispatch({ type: "SELECT_CONVERSATION", id });
     setText("");
     setAttachments([]);
@@ -172,6 +189,7 @@ function PlaygroundInner() {
   }
 
   async function handleSend() {
+    if (!activeId) return;
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
     const userMsg: Message = {
@@ -188,11 +206,17 @@ function PlaygroundInner() {
       message: userMsg,
     });
     if (messages.filter((m) => m.role === "user").length === 0) {
-      const titleSrc = trimmed || "Hình ảnh";
+      // A4.13: image-only first message → fall back to a date-stamped title.
+      const titleSrc = trimmed
+        ? trimmed.slice(0, 40) + (trimmed.length > 40 ? "…" : "")
+        : `Hội thoại ${new Date().toLocaleString("vi-VN", {
+            dateStyle: "short",
+            timeStyle: "short",
+          })}`;
       dispatch({
         type: "RENAME_TITLE",
         conversationId: activeId,
-        title: titleSrc.slice(0, 40) + (titleSrc.length > 40 ? "…" : ""),
+        title: titleSrc,
       });
     }
     const assistantId = uid();
@@ -211,6 +235,7 @@ function PlaygroundInner() {
   }
 
   function handleStop() {
+    if (!activeId) return;
     abort();
     // Mark the streaming placeholder as stopped. Find the last streaming msg.
     const streamingMsg = [...messages].reverse().find((m) => m.status === "streaming");
@@ -224,7 +249,7 @@ function PlaygroundInner() {
   }
 
   async function handleRegenerate() {
-    if (isStreaming) return;
+    if (!activeId || isStreaming) return;
     // Pop the last assistant message and re-stream from the prior context.
     dispatch({ type: "POP_LAST_ASSISTANT", conversationId: activeId });
     // Dispatch reads the post-pop messages on the next render; we need the
@@ -243,6 +268,7 @@ function PlaygroundInner() {
   }
 
   async function handleSaveEdit(messageId: string, newText: string) {
+    if (!activeId) return;
     setEditingId(null);
     dispatch({
       type: "EDIT_USER_AND_TRUNCATE",
@@ -277,6 +303,7 @@ function PlaygroundInner() {
   }
 
   function handleModelChange(modelId: string) {
+    if (!activeId) return;
     dispatch({
       type: "SET_MODEL",
       conversationId: activeId,
@@ -398,7 +425,9 @@ function PlaygroundInner() {
           )}
           <div className="flex items-center gap-2">
             <Sparkles size={16} style={{ color: ACCENT }} />
-            <span className="text-sm font-medium">{active.title}</span>
+            <span className="text-sm font-medium">
+              {active?.title ?? "Đang tải…"}
+            </span>
           </div>
           <div className="flex-1" />
           <Link
