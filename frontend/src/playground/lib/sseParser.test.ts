@@ -66,3 +66,32 @@ describe("drainEvents", () => {
     expect(rest).toBe("");
   });
 });
+
+describe("Phase 5 status events", () => {
+  it("T5.1 — parses {type:'status', message, done:false} → status event", () => {
+    const buf =
+      `data: {"type":"status","message":"Captioning...","done":false}\n\n`;
+    const { events, rest } = drainEvents(buf);
+    expect(rest).toBe("");
+    expect(events).toEqual([
+      { type: "status", message: "Captioning...", statusDone: false },
+    ]);
+  });
+
+  it("T5.2 — parses status event with done:true", () => {
+    const buf =
+      `data: {"type":"status","message":"Done","done":true}\n\n`;
+    const { events } = drainEvents(buf);
+    expect(events).toEqual([
+      { type: "status", message: "Done", statusDone: true },
+    ]);
+  });
+
+  it("T5.3 — ignores unknown {type} shape; subsequent delta still parsed", () => {
+    const buf =
+      `data: {"type":"future_unknown","whatever":1}\n\n` +
+      `data: {"delta":"hi","done":false}\n\n`;
+    const { events } = drainEvents(buf);
+    expect(events).toEqual([{ type: "delta", delta: "hi" }]);
+  });
+});

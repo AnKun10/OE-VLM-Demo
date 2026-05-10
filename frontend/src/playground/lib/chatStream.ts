@@ -5,6 +5,8 @@ export type ChatStreamCallbacks = {
   onDelta: (delta: string) => void;
   onDone: () => void;
   onError: (e: { errorKind: ErrorKind; message: string }) => void;
+  /** Phase 5: ephemeral status events from the image compressor. */
+  onStatus?: (message: string, done: boolean) => void;
 };
 
 export type ChatStreamArgs = ChatStreamCallbacks & {
@@ -19,7 +21,7 @@ export type ChatStreamArgs = ChatStreamCallbacks & {
  * AbortError is treated as a silent success (no callback fires).
  */
 export async function streamChat(args: ChatStreamArgs): Promise<void> {
-  const { signal, messages, modelId, onDelta, onDone, onError } = args;
+  const { signal, messages, modelId, onDelta, onDone, onError, onStatus } = args;
 
   let resp: Response;
   try {
@@ -44,8 +46,6 @@ export async function streamChat(args: ChatStreamArgs): Promise<void> {
   const dec = new TextDecoder();
   let buf = "";
 
-  // Abort promise: resolves when the signal fires, letting us break out
-  // of reader.read() which does not natively respect AbortSignal.
   const abortPromise = new Promise<never>((_, reject) => {
     if (signal.aborted) {
       reject(new DOMException("Aborted", "AbortError"));
@@ -67,6 +67,7 @@ export async function streamChat(args: ChatStreamArgs): Promise<void> {
       buf = rest;
       for (const ev of events) {
         if (ev.type === "delta") onDelta(ev.delta);
+        else if (ev.type === "status") onStatus?.(ev.message, ev.statusDone);
         else if (ev.type === "done") {
           onDone();
           return;

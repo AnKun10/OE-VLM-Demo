@@ -180,3 +180,41 @@ describe("streamChat", () => {
     );
   });
 });
+
+describe("Phase 5 onStatus callback", () => {
+  it("T5.4 — invokes onStatus(message, done) when status events arrive", async () => {
+    const body =
+      `data: {"type":"status","message":"Captioning...","done":false}\n\n` +
+      `data: {"type":"status","message":"Done","done":true}\n\n` +
+      `data: {"delta":"hi","done":false}\n\n` +
+      `data: {"delta":"","done":true}\n\n`;
+
+    const fetchMock = vi.fn(async () =>
+      new Response(body, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const onStatus = vi.fn();
+    const onDelta = vi.fn();
+    const onDone = vi.fn();
+    const onError = vi.fn();
+
+    await streamChat({
+      signal: new AbortController().signal,
+      messages: [],
+      modelId: null,
+      onDelta, onDone, onError, onStatus,
+    });
+
+    expect(onStatus.mock.calls).toEqual([
+      ["Captioning...", false],
+      ["Done", true],
+    ]);
+    expect(onDelta).toHaveBeenCalledWith("hi");
+    expect(onDone).toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+});
