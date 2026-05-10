@@ -1,6 +1,5 @@
 import type { Page, Route } from "@playwright/test";
 
-const enc = new TextEncoder();
 function sseFrame(payload: object): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
