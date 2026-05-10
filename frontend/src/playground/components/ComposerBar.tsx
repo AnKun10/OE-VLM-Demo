@@ -1,4 +1,5 @@
 import { ImagePlus, Mic, Send } from "lucide-react";
+import { StopButton } from "./StopButton";
 import {
   useCallback,
   useEffect,
@@ -29,6 +30,8 @@ export type ComposerBarProps = {
   visionWarning?: string | null;
   historyImageCount: number;
   disabled?: boolean;
+  streaming?: boolean;
+  onStop?: () => void;
 };
 
 export function ComposerBar(props: ComposerBarProps) {
@@ -44,6 +47,8 @@ export function ComposerBar(props: ComposerBarProps) {
     visionWarning,
     historyImageCount,
     disabled,
+    streaming,
+    onStop,
   } = props;
 
   const { upload, uploading } = useFileUpload();
@@ -236,20 +241,24 @@ export function ComposerBar(props: ComposerBarProps) {
               </button>
               {modelDropdown}
             </div>
-            <button
-              type="button"
-              onClick={onSend}
-              disabled={!canSend}
-              className="flex items-center justify-center rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-              style={{
-                width: 36,
-                height: 36,
-                background: canSend ? "#015e9f" : "#9ca3af",
-              }}
-              aria-label="Gửi"
-            >
-              <Send size={15} className="text-white" style={{ marginLeft: 1 }} />
-            </button>
+            {streaming && onStop ? (
+              <StopButton onClick={onStop} />
+            ) : (
+              <button
+                type="button"
+                onClick={onSend}
+                disabled={!canSend}
+                className="flex items-center justify-center rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{
+                  width: 36,
+                  height: 36,
+                  background: canSend ? "#015e9f" : "#9ca3af",
+                }}
+                aria-label="Gửi"
+              >
+                <Send size={15} className="text-white" style={{ marginLeft: 1 }} />
+              </button>
+            )}
           </div>
         </div>
         <p className="text-center mt-2.5 text-[11px]" style={{ color: "#9ca3af" }}>
