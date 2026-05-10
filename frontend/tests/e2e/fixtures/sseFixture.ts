@@ -48,7 +48,7 @@ export async function mockFileUploads(page: Page) {
 }
 
 /**
- * Mock /api/chat/stream to emit a fixed sequence of SSE frames.
+ * Mock /api/chat/stream to emit a fixed sequence of SSE frames in one shot.
  */
 export async function mockChatStream(
   page: Page,
@@ -64,6 +64,39 @@ export async function mockChatStream(
       body,
     });
   });
+}
+
+/**
+ * Counter-based response: each call to /api/chat/stream returns a different
+ * delta sequence. Enables tests that send → regenerate → expect different reply.
+ */
+export async function mockChatStreamSequence(
+  page: Page,
+  responses: string[][],
+) {
+  let i = 0;
+  await page.route("**/api/chat/stream", (route: Route) => {
+    const deltas = responses[Math.min(i, responses.length - 1)];
+    i++;
+    const body =
+      deltas.map((d) => sseFrame({ delta: d, done: false })).join("") +
+      sseFrame({ delta: "", done: true });
+    route.fulfill({
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+      body,
+    });
+  });
+}
+
+/**
+ * Mock /api/chat/stream that fails the request entirely (network error path).
+ * Used for A3.7: Regenerate when network down.
+ */
+export async function mockChatStreamNetworkError(page: Page) {
+  await page.route("**/api/chat/stream", (route: Route) =>
+    route.abort("failed"),
+  );
 }
 
 export async function setupAllMocks(page: Page) {
