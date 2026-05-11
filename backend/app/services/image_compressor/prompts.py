@@ -19,7 +19,7 @@ Cần nêu (đầy đủ, đúng thứ tự):
   - Văn bản trong ảnh: copy nguyên văn nếu ≤30 từ; nếu dài, tóm tắt + trích 1 câu đại diện.
   - Chi tiết phân biệt: biển hiệu, logo, đồ vật đáng chú ý, dấu hiệu thời gian/địa điểm.
 
-Độ dài: không quá 150 từ.
+Độ dài: 2-5 câu, không quá 150 từ.
 
 KHÔNG: suy diễn cảm xúc nhân vật, ý đồ chụp ảnh, câu chuyện đằng sau; đánh giá thẩm mỹ (\"đẹp\", \"ấn tượng\"); bịa chi tiết không thấy rõ (nếu không chắc, dùng \"có vẻ\" hoặc bỏ qua); dùng markdown, bullet symbols, prefix \"Caption:\" hoặc xuống dòng.
 
