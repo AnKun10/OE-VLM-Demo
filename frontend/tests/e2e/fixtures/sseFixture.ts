@@ -104,3 +104,39 @@ export async function setupAllMocks(page: Page) {
   await mockFileUploads(page);
   await mockChatStream(page);
 }
+
+/**
+ * Phase 5: emit a sequence of status events, then a single thinking-log
+ * delta, then the model deltas, then done.
+ */
+export async function mockChatStreamWithStatus(
+  page: Page,
+  statuses: Array<{ message: string; done: boolean }>,
+  thinkingMd: string,
+  deltas: string[],
+) {
+  await page.route("**/api/chat/stream", (route: Route) => {
+    const parts: string[] = [];
+    for (const s of statuses) {
+      parts.push(
+        `data: ${JSON.stringify({ type: "status", message: s.message, done: s.done })}\n\n`,
+      );
+    }
+    if (thinkingMd) {
+      parts.push(
+        `data: ${JSON.stringify({ delta: thinkingMd, done: false })}\n\n`,
+      );
+    }
+    for (const d of deltas) {
+      parts.push(
+        `data: ${JSON.stringify({ delta: d, done: false })}\n\n`,
+      );
+    }
+    parts.push(`data: ${JSON.stringify({ delta: "", done: true })}\n\n`);
+    route.fulfill({
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+      body: parts.join(""),
+    });
+  });
+}
