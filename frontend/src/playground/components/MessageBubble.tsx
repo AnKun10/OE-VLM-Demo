@@ -4,10 +4,19 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import "highlight.js/styles/github.css";
 import { SafeLink } from "./SafeLink";
 import { InlineEditor } from "./InlineEditor";
 import type { Message } from "../types";
+
+// Allow the compressor's <details>/<summary> thinking-log block while
+// retaining the default schema's strictness for everything else. <script>,
+// <iframe>, on* handlers, javascript: URLs all get stripped.
+const SANITIZE_SCHEMA = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), "details", "summary"],
+};
 
 function AttachmentImg({ url, alt }: { url: string; alt: string }) {
   const [failed, setFailed] = useState(false);
@@ -171,7 +180,7 @@ function AssistantBubble({
         >
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeRaw, rehypeHighlight]}
+            rehypePlugins={[rehypeRaw, [rehypeSanitize, SANITIZE_SCHEMA], rehypeHighlight]}
             components={{ a: SafeLink as never }}
           >
             {msg.text || ""}
