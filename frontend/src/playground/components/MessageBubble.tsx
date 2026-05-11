@@ -3,6 +3,7 @@ import { Pencil, RefreshCw, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import rehypeRaw from "rehype-raw";
 import "highlight.js/styles/github.css";
 import { SafeLink } from "./SafeLink";
 import { InlineEditor } from "./InlineEditor";
@@ -170,7 +171,7 @@ function AssistantBubble({
         >
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeHighlight]}
+            rehypePlugins={[rehypeRaw, rehypeHighlight]}
             components={{ a: SafeLink as never }}
           >
             {msg.text || ""}

@@ -28,7 +28,6 @@ export type ComposerBarProps = {
   modelDropdown: ReactNode;
   visionEnabled: boolean;
   visionWarning?: string | null;
-  historyImageCount: number;
   disabled?: boolean;
   streaming?: boolean;
   onStop?: () => void;
@@ -45,7 +44,6 @@ export function ComposerBar(props: ComposerBarProps) {
     modelDropdown,
     visionEnabled,
     visionWarning,
-    historyImageCount,
     disabled,
     streaming,
     onStop,
@@ -67,7 +65,7 @@ export function ComposerBar(props: ComposerBarProps) {
     }
   }, [text]);
 
-  const canAddMore = checkAttachmentCap(attachments.length, historyImageCount);
+  const canAddMore = checkAttachmentCap(attachments.length);
 
   const handleFiles = useCallback(
     async (files: File[]) => {
@@ -77,8 +75,8 @@ export function ComposerBar(props: ComposerBarProps) {
       }
       let added = 0;
       for (const f of files) {
-        if (!checkAttachmentCap(attachments.length + added, historyImageCount)) {
-          toast.push(`Tối đa ${MAX_IMAGES} ảnh trong một cuộc trò chuyện.`, "error");
+        if (!checkAttachmentCap(attachments.length + added)) {
+          toast.push(`Tối đa ${MAX_IMAGES} ảnh trong một tin nhắn.`, "error");
           break;
         }
         try {
@@ -91,7 +89,7 @@ export function ComposerBar(props: ComposerBarProps) {
         }
       }
     },
-    [attachments.length, historyImageCount, onAttach, toast, upload, visionEnabled],
+    [attachments.length, onAttach, toast, upload, visionEnabled],
   );
 
   const onPickerChange = (e: React.ChangeEvent<HTMLInputElement>) => {

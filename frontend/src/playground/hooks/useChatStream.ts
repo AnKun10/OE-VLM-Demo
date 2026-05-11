@@ -24,6 +24,7 @@ export function useChatStream(): {
       onDelta: args.onDelta,
       onDone: args.onDone,
       onError: args.onError,
+      onStatus: args.onStatus,
     });
   }, []);
 

@@ -37,15 +37,11 @@ describe("validateFile", () => {
 });
 
 describe("checkAttachmentCap", () => {
-  it("T2.10 — false at 4 attachments + history (cannot add more)", () => {
-    expect(checkAttachmentCap(4, 0)).toBe(false);
-    expect(checkAttachmentCap(2, 2)).toBe(false);
-    expect(checkAttachmentCap(0, 4)).toBe(false);
-  });
-  it("T2.10 — true when total < 4", () => {
-    expect(checkAttachmentCap(0, 0)).toBe(true);
-    expect(checkAttachmentCap(3, 0)).toBe(true);
-    expect(checkAttachmentCap(2, 1)).toBe(true);
+  it("T2.10 (Phase 5) — rejects when current >= MAX_IMAGES (per-turn only)", () => {
+    expect(checkAttachmentCap(0)).toBe(true);
+    expect(checkAttachmentCap(3)).toBe(true);
+    expect(checkAttachmentCap(4)).toBe(false);
+    expect(checkAttachmentCap(5)).toBe(false);
   });
 });
 

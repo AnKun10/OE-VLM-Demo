@@ -13,6 +13,7 @@ import type { MessageActions } from "../playground/components/MessageBubble";
 import { ComposerBar } from "../playground/components/ComposerBar";
 import { ModelDropdown } from "../playground/components/ModelDropdown";
 import { Toaster } from "../playground/components/Toaster";
+import { StatusBanner, type StatusBannerState } from "../playground/components/StatusBanner";
 import { useChatStream } from "../playground/hooks/useChatStream";
 import { useConversations } from "../playground/hooks/useConversations";
 import { useModels } from "../playground/hooks/useModels";
@@ -55,6 +56,7 @@ function PlaygroundInner() {
   const [attachments, setAttachments] = useState<AttachmentRef[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [status, setStatus] = useState<StatusBannerState | null>(null);
 
   // Latest dispatch reference for use inside async callbacks (avoids stale closures
   // when streamingId / activeId changes mid-stream).
@@ -105,12 +107,6 @@ function PlaygroundInner() {
     [messages],
   );
 
-  const historyImageCount = useMemo(
-    () =>
-      messages.reduce((n, m) => n + (m.attachments?.length ?? 0), 0),
-    [messages],
-  );
-
   function newConversation() {
     dispatch({
       type: "NEW_CONVERSATION",
@@ -142,6 +138,7 @@ function PlaygroundInner() {
     setText("");
     setAttachments([]);
     setEditingId(null);
+    setStatus(null);
   }
 
   function deleteConversation(id: string) {
@@ -185,6 +182,7 @@ function PlaygroundInner() {
           messageId: assistantId,
           errorKind: e.errorKind,
         }),
+      onStatus: (message, done) => setStatus({ message, done }),
     });
   }
 
@@ -237,6 +235,7 @@ function PlaygroundInner() {
   function handleStop() {
     if (!activeId) return;
     abort();
+    setStatus(null);
     // Mark the streaming placeholder as stopped. Find the last streaming msg.
     const streamingMsg = [...messages].reverse().find((m) => m.status === "streaming");
     if (streamingMsg) {
@@ -444,6 +443,7 @@ function PlaygroundInner() {
         </header>
 
         <div className="flex-1 overflow-y-auto">
+          <StatusBanner status={status} onClear={() => setStatus(null)} />
           <MessageList messages={messages} actions={messageActions} />
         </div>
 
@@ -465,11 +465,10 @@ function PlaygroundInner() {
           }
           visionEnabled={visionEnabled}
           visionWarning={
-            !visionEnabled && (attachments.length > 0 || historyImageCount > 0)
+            !visionEnabled && attachments.length > 0
               ? "Model mới không hỗ trợ ảnh; gửi sẽ thất bại."
               : null
           }
-          historyImageCount={historyImageCount}
           streaming={isStreaming}
           onStop={handleStop}
         />
