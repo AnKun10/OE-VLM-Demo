@@ -31,7 +31,7 @@ compressor:
   caption_model_id: "qwen3-vl-8b-vllm"
   router_model_id: "qwen3-vl-8b-vllm"
   cache_db_path: "backend/data/img_captions.db"
-  caption_max_tokens: 80
+  caption_max_tokens: 300
   router_max_tokens: 60
   caption_timeout_s: 30
   router_timeout_s: 15
