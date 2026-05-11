@@ -1,0 +1,39 @@
+models:
+  - id: "qwen3-vl-8b-vllm"           # Unique identifier — sent by frontend to select this model
+    name: "Qwen3-VL 8B (vLLM)"       # Display name shown in the frontend dropdown
+    provider: "qwen_vllm"             # Provider class to use (maps to providers/ module)
+    base_url: "http://localhost:8003/v1"  # SSH-tunneled endpoint to remote vLLM server
+    model_id: "qwen3-vl-8b"           # Model name sent in API requests (matches vLLM --served-model-name)
+    api_key_env: null                 # .env variable holding the API key (null = no auth, uses "none")
+    system_prompt: >                  # System message prepended to every conversation
+      You are a helpful AI assistant!
+    max_tokens: 2048                  # Maximum tokens for model generation
+    temperature: 0.7                  # Sampling temperature (>0 → varied outputs; 0 = greedy/identical regenerates)
+    min_pixels: 200704                # Qwen processor lower bound (optional — falls back to config.py)
+    max_pixels: 1605632               # Qwen processor upper bound (optional — falls back to config.py)
+    capabilities:
+      vision: true                    # Frontend gates image attachment on this flag
+
+  - id: "gpt-5.4-mini"               # Unique identifier — sent by frontend to select this model
+    name: "GPT-5.4 Mini (OpenAI)"    # Display name shown in the frontend dropdown
+    provider: "openai_compatible"     # Provider class to use (maps to providers/ module)
+    base_url: "https://api.openai.com/v1"  # API endpoint for this provider
+    model_id: "gpt-5.4-mini"         # Model name sent in API requests
+    api_key_env: "OPENAI_API_KEY"     # .env variable holding the API key
+    system_prompt: >                  # System message prepended to every conversation
+      You are a helpful AI assistant!
+    max_tokens: 256                   # Maximum tokens for model generation
+    temperature: 0                    # Sampling temperature (0 = deterministic)
+    capabilities:
+      vision: false                   # Frontend hides image attach button for this model
+
+compressor:
+  caption_model_id: "qwen3-vl-8b-vllm"
+  router_model_id: "qwen3-vl-8b-vllm"
+  cache_db_path: "backend/data/img_captions.db"
+  caption_max_tokens: 300
+  router_max_tokens: 60
+  caption_timeout_s: 30
+  router_timeout_s: 15
+  router_failopen_keep: true
+  webui_internal_base: "http://127.0.0.1:8000"

@@ -1,12 +1,20 @@
-from fastapi import APIRouter, Depends
+import base64
+import json
+import traceback
+from pathlib import Path
+from typing import Literal
+
+from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
+from openai import BadRequestError
 from pydantic import BaseModel
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.database import get_db
-from app.services.milvus_service import search_similar_products
-from bson import ObjectId
 
-router = APIRouter(prefix="/api/chat", tags=["chat"])
+from app.services.messages import build_openai_messages, enforce_image_cap
 
+router = APIRouter(prefix="/api", tags=["chat"])
+
+
+# --- Legacy non-streaming endpoint (kept for smoke script) -----------------
 
 class ChatMessage(BaseModel):
     role: str
@@ -16,97 +24,166 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = []
-
-
-class ChatProductRef(BaseModel):
-    id: str
-    name: str
-    image_url: str | None = None
+    image_urls: list[str] = []
+    model_id: str | None = None
 
 
 class ChatResponse(BaseModel):
     reply: str
-    products: list[ChatProductRef] = []
 
-@router.post("", response_model=ChatResponse)
-async def chat(request: ChatRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
-    message = request.message.strip()
 
-    # Try semantic search first, fall back to text search
-    found_products = []
-    try:
-        ids = search_similar_products(message, top_k=3)
-        if ids:
-            valid_ids = [ObjectId(i) for i in ids if ObjectId.is_valid(i)]
-            docs = await db.products.find({"_id": {"$in": valid_ids}}).to_list(length=len(valid_ids))
-            doc_map = {str(doc["_id"]): doc for doc in docs}
-            for product_id in ids:
-                doc = doc_map.get(product_id)
-                if not doc:
-                    continue
-                doc["id"] = str(doc.pop("_id"))
-                found_products.append(doc)
-    except Exception:
-        pass
+def resolve_image_url(url: str) -> str | None:
+    """Resolve an image source to a data URI suitable for OpenAI-style
+    image_url content. Supports base64 data URIs (passed through) and
+    local /images/ paths (converted to base64 data URIs).
+    """
+    if url.startswith("data:"):
+        return url
+    if url.startswith("/images/"):
+        path = Path("images") / url.removeprefix("/images/")
+        if path.exists():
+            data = base64.b64encode(path.read_bytes()).decode()
+            suffix = path.suffix.lstrip(".").lower()
+            mime = {"jpg": "jpeg", "jpeg": "jpeg",
+                    "png": "png", "webp": "webp"}.get(suffix, "jpeg")
+            return f"data:image/{mime};base64,{data}"
+    return None
 
-    # Fall back to text search if semantic search returned nothing
-    if not found_products:
-        cursor = db.products.find(
-            {"$text": {"$search": message}},
-            {"score": {"$meta": "textScore"}},
-        ).sort([("score", {"$meta": "textScore"})]).limit(3)
-        async for doc in cursor:
-            doc["id"] = str(doc.pop("_id"))
-            found_products.append(doc)
 
-    # Build reply
-    if found_products:
-        lines = ["Dựa trên yêu cầu của bạn, tôi gợi ý những sản phẩm sau:\n"]
-        refs = []
-        for p in found_products:
-            store = p.get("store", "")
-            category = p.get("category", "")
-            meta = " - ".join(part for part in [store, category] if part)
-            lines.append(f"• **{p['name']}**{f' - {meta}' if meta else ''}")
-            refs.append(ChatProductRef(id=p["id"], name=p["name"], image_url=p.get("image_url")))
+@router.get("/models")
+async def list_models(request: Request):
+    manager = request.app.state.vlm_manager
+    return {"models": manager.list_models()}
 
-        lines.append(
-            "\nBạn có muốn biết thêm chi tiết về sản phẩm nào không?"
-        )
-        reply = "\n".join(lines)
-        return ChatResponse(reply=reply, products=refs)
 
-    # Generic helpful response when no products matched
-    lower = message.lower()
-    if any(w in lower for w in ["giá", "rẻ", "khuyến mãi", "giảm"]):
-        reply = (
-            "Bạn có thể vào trang Sản phẩm và lọc theo cửa hàng hoặc danh mục để tìm sản phẩm phù hợp."
-        )
-    elif any(w in lower for w in ["trail", "địa hình", "núi", "đường mòn"]):
-        reply = (
-            "Giày trail running phù hợp cho địa hình phức tạp với đế bám tốt. "
-            "HOKA Speedgoat và Salomon Speedcross là những lựa chọn phổ biến. "
-            "Bạn có muốn tôi tìm kiếm thêm không?"
-        )
-    elif any(w in lower for w in ["road", "đường nhựa", "asphalt", "marathon"]):
-        reply = (
-            "Giày road running được thiết kế cho mặt đường phẳng với đệm tốt. "
-            "Adidas, Nike và Puma đều có nhiều mẫu xuất sắc. "
-            "Hãy cho tôi biết thêm yêu cầu của bạn!"
-        )
-    elif any(w in lower for w in ["size", "cỡ", "số"]):
-        reply = (
-            "Chúng tôi có sẵn các size từ 36 đến 47 tùy theo dòng sản phẩm. "
-            "Thông thường nên chọn size lớn hơn 0.5 so với giày thường ngày khi mua giày chạy bộ."
-        )
+@router.post("/chat", response_model=ChatResponse)
+async def chat(request: Request, body: ChatRequest) -> ChatResponse:
+    manager = request.app.state.vlm_manager
+    message = body.message.strip()
+
+    image_data_url: str | None = None
+    for url in body.image_urls:
+        image_data_url = resolve_image_url(url)
+        if image_data_url is not None:
+            break
+
+    messages: list[dict] = []
+    for msg in body.history[-4:]:
+        messages.append({"role": msg.role, "content": msg.content})
+
+    if image_data_url is not None:
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+                {"type": "text", "text": message},
+            ],
+        })
     else:
-        reply = (
-            "Xin chào! Tôi có thể giúp bạn:\n"
-            "• Tìm giày chạy bộ phù hợp\n"
-            "• So sánh các dòng sản phẩm\n"
-            "• Tư vấn về size và fit\n"
-            "• Thông tin khuyến mãi\n\n"
-            "Bạn đang tìm kiếm loại giày nào?"
-        )
+        messages.append({"role": "user", "content": message})
+
+    try:
+        reply = await manager.generate(body.model_id, messages)
+    except ConnectionError as exc:
+        print(f"[chat] Connection error: {exc}")
+        return ChatResponse(reply=f"Lỗi kết nối: {exc}")
+    except Exception:
+        traceback.print_exc()
+        return ChatResponse(reply="Xin lỗi, không thể xử lý yêu cầu.")
 
     return ChatResponse(reply=reply)
+
+
+# --- New streaming endpoint -------------------------------------------------
+
+class Attachment(BaseModel):
+    id: str
+
+
+class ChatMessageWithAttachments(BaseModel):
+    role: Literal["user", "assistant"]
+    text: str = ""
+    attachments: list[Attachment] = []
+
+
+class ChatStreamRequest(BaseModel):
+    messages: list[ChatMessageWithAttachments]
+    model_id: str | None = None
+
+
+def _sse_delta(delta: str) -> str:
+    return f"data: {json.dumps({'delta': delta, 'done': False}, ensure_ascii=False)}\n\n"
+
+
+def _sse_done() -> str:
+    return f"data: {json.dumps({'delta': '', 'done': True})}\n\n"
+
+
+def _sse_error(kind: str, message: str) -> str:
+    return f"data: {json.dumps({'error': kind, 'message': message}, ensure_ascii=False)}\n\n"
+
+
+def _sse_status(message: str, done: bool) -> str:
+    return f"data: {json.dumps({'type': 'status', 'message': message, 'done': done}, ensure_ascii=False)}\n\n"
+
+
+@router.post("/chat/stream")
+async def chat_stream(request: Request, body: ChatStreamRequest):
+    manager = request.app.state.vlm_manager
+
+    async def event_stream():
+        try:
+            openai_messages = build_openai_messages(body.messages)
+        except FileNotFoundError as exc:
+            yield _sse_error("file_missing", str(exc))
+            return
+
+        # Phase 5: image-aware compressor. Engine self-catches its own errors
+        # and returns a passthrough on failure. The outer try/except below is a
+        # second-line guard for unexpected iteration-level issues only.
+        engine = getattr(request.app.state, "compressor_engine", None)
+        thinking_md = ""
+        if engine is not None:
+            try:
+                from app.services.image_compressor.types import (
+                    CompressionResult, StatusEvent,
+                )
+                async for event in engine.compress(openai_messages):
+                    if isinstance(event, StatusEvent):
+                        yield _sse_status(event.message, event.done)
+                    elif isinstance(event, CompressionResult):
+                        openai_messages = event.messages
+                        thinking_md = event.thinking_md
+                        break
+            except Exception:
+                traceback.print_exc()
+
+        # Safety net: even if compressor passed-through with too many images
+        # (or there's no compressor at all), enforce vLLM's hard limit of 4.
+        openai_messages = enforce_image_cap(openai_messages, max_images=4)
+
+        try:
+            first_emitted = False
+            async for delta in manager.stream(body.model_id, openai_messages):
+                if await request.is_disconnected():
+                    return
+                if not first_emitted and thinking_md:
+                    yield _sse_delta(thinking_md)
+                first_emitted = True
+                yield _sse_delta(delta)
+            if not first_emitted and thinking_md:
+                # The model produced zero deltas but we still want the
+                # thinking-log visible (e.g., model 200 with empty body).
+                yield _sse_delta(thinking_md)
+            yield _sse_done()
+        except ConnectionError as exc:
+            yield _sse_error("connection", str(exc))
+        except BadRequestError as exc:
+            yield _sse_error("bad_request", str(exc))
+        except RuntimeError as exc:
+            yield _sse_error("bad_request", str(exc))
+        except Exception:
+            traceback.print_exc()
+            yield _sse_error("internal", "Internal error")
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

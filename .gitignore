@@ -2,6 +2,7 @@
 backend/venv/
 backend/.venv/
 backend/images/
+backend/data/
 __pycache__/
 *.py[cod]
 *.pyo
@@ -42,3 +43,15 @@ etcd_data/
 
 # Logs
 *.log
+
+# Claude Code
+.claude/
+CLAUDE.md
+.playwright-mcp/
+.superpowers/
+
+# Docs
+docs/
+
+# Other files
+vast_ai.txt
