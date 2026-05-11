@@ -7,8 +7,8 @@ models:
     api_key_env: null                 # .env variable holding the API key (null = no auth, uses "none")
     system_prompt: >                  # System message prepended to every conversation
       You are a helpful AI assistant!
-    max_tokens: 512                   # Maximum tokens for model generation
-    temperature: 0                    # Sampling temperature (0 = deterministic)
+    max_tokens: 2048                  # Maximum tokens for model generation
+    temperature: 0.7                  # Sampling temperature (>0 → varied outputs; 0 = greedy/identical regenerates)
     min_pixels: 200704                # Qwen processor lower bound (optional — falls back to config.py)
     max_pixels: 1605632               # Qwen processor upper bound (optional — falls back to config.py)
     capabilities:

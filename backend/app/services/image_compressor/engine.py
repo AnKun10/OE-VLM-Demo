@@ -170,7 +170,7 @@ class ImageCompressorEngine:
         if captions_used:
             lines.append("**Step 2 — Captions in use**")
             for h_short, cap in captions_used:
-                lines.append(f"- `{h_short}` → \"{cap[:120]}\"")
+                lines.append(f"- `{h_short}` → \"{cap}\"")
             lines.append("")
         if user_text is not None:
             lines.append("**Step 3 — Router**")
