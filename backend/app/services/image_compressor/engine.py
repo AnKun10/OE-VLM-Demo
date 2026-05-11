@@ -185,6 +185,12 @@ class ImageCompressorEngine:
         else:
             lines.append("- Images preserved; no tokens saved")
         lines.append("</details>")
+        # Two trailing empty strings → `\n\n` after </details>. CommonMark
+        # treats <details> as a type-6 HTML block that continues until a
+        # blank line; without the blank line, the model's response below
+        # is rendered as part of the HTML block (so its inline markdown
+        # like **bold** shows as literal asterisks).
+        lines.append("")
         lines.append("")
         return "\n".join(lines)
 

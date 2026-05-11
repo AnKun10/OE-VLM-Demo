@@ -79,6 +79,14 @@ async def test_T5B7_compress_with_images(tmp_path: Path) -> None:
     # Thinking md present and mentions reasoning.
     assert "🧠 Image compressor reasoning" in result.thinking_md
     assert "<details>" in result.thinking_md and "</details>" in result.thinking_md
+    # CommonMark closes a type-6 HTML block (<details>) only at a BLANK
+    # line. Without "</details>\n\n", the model response immediately after
+    # is treated as part of the HTML block and inline markdown like
+    # **bold** renders as literal asterisks.
+    assert result.thinking_md.endswith("</details>\n\n"), (
+        "thinking_md must end with </details>\\n\\n so the model response "
+        "below is parsed as markdown, not raw HTML."
+    )
 
 
 # ---- T5.B7-keep: latest turn has images → keep_idx = latest ------------------
