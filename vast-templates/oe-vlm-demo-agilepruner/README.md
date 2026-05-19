@@ -42,7 +42,7 @@ The boot adds a new step [3/6] between repo clone and vLLM launch:
 The vLLM serve command then appends four flags:
 `--agilepruner-enable --agilepruner-ratio $AP_AGILEPRUNER_RATIO --agilepruner-tau-max $AP_AGILEPRUNER_TAU_MAX --agilepruner-erank-avg $AP_AGILEPRUNER_ERANK_AVG`.
 
-To turn the patch off without changing template: set `AP_AGILEPRUNER_ENABLE=false`. The stock vLLM bin will boot unmodified (the backup `.orig` files are NOT auto-restored — to revert mid-pod, manually `mv *.orig` back and restart `vllm` tmux session).
+To turn the patch off without changing template: set `AP_AGILEPRUNER_ENABLE=false` and restart the pod (or kill+relaunch the `vllm` tmux session after editing env). The stock vLLM bin still boots unmodified because the backup `.orig` files in the vLLM site-packages dir are NOT auto-restored. To restore stock vLLM in place (without a pod restart), see the "Want to revert to stock vLLM" row in the Troubleshooting table below.
 
 If `git clone` of the fork fails (repo private, network issue), the script logs a warning and continues with stock vLLM rather than aborting.
 
