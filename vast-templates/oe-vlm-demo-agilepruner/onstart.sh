@@ -141,14 +141,16 @@ if ! curl -sf -m 2 "http://127.0.0.1:${VLLM_PORT}/health" >/dev/null 2>&1; then
       echo "[4/6] AgilePruner flags: $AP_ARGS"
     fi
     # NOTE: --enforce-eager is required for Qwen3-VL multimodal on vLLM 0.20.
-    # See open-webui/vast-templates/qwen3-vl-8b/TEMPLATE_FIELDS.md for the
-    # full rationale.
+    # max-model-len=16384 (down from 32k) chosen to fit KV cache on a
+    # 32 GB GPU shared with other vast.ai tenants; bump back to 32768 only
+    # on a dedicated GPU. gpu-memory-utilization=0.90 leaves a small safety
+    # margin while still claiming most of the card.
     tmux new -d -s vllm "\
       export HF_HOME=${HF_HOME}; \
       vllm serve ${VLLM_MODEL} \
         --host 127.0.0.1 --port ${VLLM_PORT} \
-        --max-model-len 32768 \
-        --gpu-memory-utilization 0.85 \
+        --max-model-len 16384 \
+        --gpu-memory-utilization 0.90 \
         --trust-remote-code \
         --dtype float16 \
         --served-model-name qwen3-vl-8b \

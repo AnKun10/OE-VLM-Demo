@@ -59,10 +59,10 @@ Paste each row as a Key/Value pair. Order does not matter.
 | `PORTAL_CONFIG` | `localhost:1111:11111:/:Instance Portal\|localhost:7860:17860:/:vLLM UI\|localhost:8080:18080:/:Jupyter\|localhost:8265:18265:/:Ray Dashboard` |
 | `VLLM_MODEL` | `Qwen/Qwen3-VL-8B-Instruct` |
 | `VLLM_PORT` | `8003` |
-| `VLLM_ARGS` | `--max-model-len 32768 --gpu-memory-utilization 0.85 --trust-remote-code --dtype float16 --served-model-name qwen3-vl-8b --enforce-eager --download-dir /workspace/.hf_cache --limit-mm-per-prompt {"image":4}` |
+| `VLLM_ARGS` | `--max-model-len 16384 --gpu-memory-utilization 0.90 --trust-remote-code --dtype float16 --served-model-name qwen3-vl-8b --enforce-eager --download-dir /workspace/.hf_cache --limit-mm-per-prompt {"image":4}` |
 | `AUTO_PARALLEL` | `false` |
 | `HF_HOME` | `/workspace/.hf_cache` |
-| `HF_TOKEN` | (optional) `hf_xxxxx` — your HuggingFace token. Anonymous downloads are rate-limited; with a token, weights download faster (saves ~5–15 min on cold boot). Get one at https://huggingface.co/settings/tokens. |
+| `HF_TOKEN` | **strongly recommended** `hf_xxxxx` — your HuggingFace token. Anonymous downloads are rate-limited to ~5 MB/s (vs ~50 MB/s authenticated), turning a 4-min weight pull into a 50-min one. Get a `read`-role token at https://huggingface.co/settings/tokens. Without it, your first boot will appear to hang for a long time. |
 | `OE_REPO_URL` | `https://github.com/<your-user>/OE-VLM-Demo.git` |
 | `OE_BRANCH` | `dev/AnKun10` |
 | `OE_BACKEND_PORT` | `8000` |
