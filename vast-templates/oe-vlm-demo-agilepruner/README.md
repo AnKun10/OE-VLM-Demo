@@ -3,9 +3,11 @@
 A Vast.ai template that brings up the full OE-VLM-Demo stack with the
 **AgilePruner visual-token pre-pruning** patch applied to vLLM. Same pod layout
 as the stock `oe-vlm-demo` template (Qwen3-VL-8B on :8003, FastAPI :8000,
-Vite :5173, SSH-tunneled), plus a clone of the AgilePruner fork and a
-file-overlay step that patches the pre-installed vLLM in place — no C++
-rebuild because the fork is pinned to the same v0.20.0 as the Docker image.
+Vite :5173, SSH-tunneled), plus a file-overlay step that copies AgilePruner
+patches from the cloned OE-VLM-Demo (at `vllm-patches/`) onto the
+pre-installed vLLM site-packages — no separate vLLM fork repo, no C++
+rebuild because the patches are pinned to the same v0.20.0 as the Docker
+image.
 
 For the stock (no-AgilePruner) deployment, see the sibling template
 `vast-templates/oe-vlm-demo/`.
@@ -25,26 +27,39 @@ The template is adapted from `open-webui/vast-templates/qwen3-vl-8b/`
 - No Open WebUI; instead our FastAPI + Vite stack.
 - Adds Node.js install (NodeSource 20.x) for the frontend.
 - Repo is cloned from `OE_REPO_URL` (or rsynced manually).
-- **AgilePruner patch:** step [3/6] clones the fork and overlays its Python
-  files onto the pre-installed vLLM; step [4/6] passes four `--agilepruner-*`
-  flags to vllm serve.
+- **AgilePruner patch:** step [3/6] overlays `vllm-patches/` from the cloned
+  OE-VLM-Demo onto the pre-installed vLLM; step [4/6] passes four
+  `--agilepruner-*` flags to vllm serve.
 
 ## AgilePruner-specific behavior
 
 The boot adds a new step [3/6] between repo clone and vLLM launch:
 
-1. Clone `${AP_FORK_URL}` branch `${AP_FORK_BRANCH}` to `/workspace/vllm-fork`.
-2. Locate the pre-installed vLLM site-packages via `python3 -c "import vllm, os; ..."`.
-3. Backup `qwen3_vl.py` and `arg_utils.py` as `*.orig` (one-time, idempotent).
-4. Copy the fork's `qwen3_vl.py`, `agilepruner.py` (new file), and `arg_utils.py` into the site-packages.
-5. Touch a sentinel `.agilepruner_patched` to mark the install.
+1. Check that `$REPO_DIR/vllm-patches/` exists in the cloned OE-VLM-Demo
+   (fallback: `AP_AGILEPRUNER_ENABLE=false` and continue with stock vLLM).
+2. Verify `vllm-patches/PIN.txt` matches the installed `vllm.__version__`;
+   log a warning on mismatch.
+3. Locate the pre-installed vLLM site-packages via
+   `python3 -c "import vllm, os; ..."`.
+4. Backup `qwen3_vl.py` and `arg_utils.py` as `*.orig` (one-time, idempotent).
+5. Copy the patches' `qwen3_vl.py`, `agilepruner.py` (new file), and
+   `arg_utils.py` into the site-packages.
+6. Touch a sentinel `.agilepruner_patched` to mark the install.
 
 The vLLM serve command then appends four flags:
 `--agilepruner-enable --agilepruner-ratio $AP_AGILEPRUNER_RATIO --agilepruner-tau-max $AP_AGILEPRUNER_TAU_MAX --agilepruner-erank-avg $AP_AGILEPRUNER_ERANK_AVG`.
 
-To turn the patch off without changing template: set `AP_AGILEPRUNER_ENABLE=false` and restart the pod (or kill+relaunch the `vllm` tmux session after editing env). The stock vLLM bin still boots unmodified because the backup `.orig` files in the vLLM site-packages dir are NOT auto-restored. To restore stock vLLM in place (without a pod restart), see the "Want to revert to stock vLLM" row in the Troubleshooting table below.
+To turn the patch off without changing template: set
+`AP_AGILEPRUNER_ENABLE=false` and restart the pod (or kill+relaunch the
+`vllm` tmux session after editing env). The stock vLLM bin still boots
+unmodified because the backup `.orig` files in the vLLM site-packages dir
+are NOT auto-restored. To restore stock vLLM in place (without a pod
+restart), see the "Want to revert to stock vLLM" row in the Troubleshooting
+table below.
 
-If `git clone` of the fork fails (repo private, network issue), the script logs a warning and continues with stock vLLM rather than aborting.
+If `$REPO_DIR/vllm-patches/` is missing (e.g., the cloned branch doesn't
+include the patches), the script logs a warning and continues with stock
+vLLM rather than aborting.
 
 ## Deploy procedure
 
@@ -53,7 +68,7 @@ If `git clone` of the fork fails (repo private, network issue), the script logs 
 1. Open Vast Console → **Templates → New Template** (or clone an existing one).
 2. Open `TEMPLATE_FIELDS.md` from this repo and paste each field exactly as
    shown. Pay attention to `VLLM_PORT=8003`, `OE_REPO_URL`, `OE_BRANCH`, and
-   the six `AP_*` env vars.
+   the four `AP_*` env vars.
 3. Open `onstart.sh` from this repo and paste its entire contents into the
    "On-start Script" textarea.
 4. **Save**.
@@ -79,7 +94,7 @@ If `git clone` of the fork fails (repo private, network issue), the script logs 
 tail -f /workspace/logs/onstart.log
 ```
 
-Cold boot: 15–25 min (vLLM weights ~16 GB + AgilePruner fork clone + Python deps + npm install + Node.js install).
+Cold boot: 15–25 min (vLLM weights ~16 GB + Python deps + npm install + Node.js install).
 Warm boot (after restart): 2–4 min (everything cached on `/workspace`).
 
 When the script exits cleanly you'll see:
@@ -187,8 +202,8 @@ bash /root/onstart.sh
 ```
 
 Note: if the AgilePruner patch is already applied (sentinel exists), the patch
-step is idempotent — it re-overlays the files (updating from the fork's latest)
-but does NOT re-backup originals.
+step is idempotent — it re-overlays the files from `vllm-patches/` but does
+NOT re-backup originals.
 
 ### Pull latest code without restart
 
@@ -224,7 +239,7 @@ env, restart the instance.
 | `git pull` fails on restart with merge conflicts | `cd /workspace/oe-vlm-demo && git status` | You edited files on the pod. Either commit, stash, or `git reset --hard origin/<branch>` if the edits are disposable |
 | Pod restarts and the venv is missing | `ls /workspace/.venvs/oe-backend/bin/uvicorn` | Storage was ephemeral, not persistent. Use a different offer with a Volume |
 | `images/` 404s on `/api/files/<id>` | `ls /workspace/oe-vlm-demo/backend/images/` | Files were uploaded but pod restart didn't preserve them. They live in the repo dir on `/workspace`, so a persistent volume keeps them. If repo dir is fresh, that's expected |
-| `vllm.log` shows `unrecognized argument: --agilepruner-enable` | `cat /workspace/logs/onstart.log \| grep '\[3/6\]'` | Patch didn't apply. Either fork clone failed or vllm-site-packages overlay was skipped. Check earlier onstart log for warnings |
+| `vllm.log` shows `unrecognized argument: --agilepruner-enable` | `cat /workspace/logs/onstart.log \| grep '\[3/6\]'` | Patch didn't apply. Either `$REPO_DIR/vllm-patches/` is missing or vllm-site-packages overlay was skipped. Check earlier onstart log for warnings at `[3/6]`. |
 | Patch active but `[AgilePruner]` log lines never appear | Send a chat request with an image, then re-check the log | Patch's CLI flags accepted but selection branch unreached. Likely indicates `--agilepruner-enable` was stripped from VLLM_ARGS — check the tmux command |
 | Want to revert to stock vLLM without re-renting | SSH, `cd $(python3 -c "import vllm,os;print(os.path.dirname(vllm.__file__))")` | Restore: `mv model_executor/models/qwen3_vl.py.orig model_executor/models/qwen3_vl.py && mv engine/arg_utils.py.orig engine/arg_utils.py && rm model_executor/models/agilepruner.py .agilepruner_patched`. Then `tmux kill-session -t vllm && bash /root/onstart.sh` with `AP_AGILEPRUNER_ENABLE=false` |
 
@@ -251,4 +266,4 @@ destroy the instance from the Vast Console.
   port 8003 publicly.
 - **Calibration of `erank_avg` for Qwen3-VL** — the template ships with the
   paper's LLaVA value (95.0). Calibrating on a Qwen3-VL distribution is a
-  documented follow-up (see the fork's `AGILEPRUNER.md`).
+  documented follow-up (see `vllm-patches/README.md` in the repo).

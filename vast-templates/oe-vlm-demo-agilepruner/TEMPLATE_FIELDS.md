@@ -14,7 +14,7 @@ Console template editor. Keep it open side-by-side with the Vast Console.
 | Field | Value |
 |---|---|
 | Template Name | `OE-VLM-Demo + AgilePruner - Qwen3-VL 8B (FastAPI + Vite)` |
-| Template Description | `Qwen3-VL 8B served via vLLM (patched with AgilePruner visual-token pre-pruning) on :8003 + OE-VLM-Demo FastAPI backend on :8000 + Vite dev server on :5173. All three reached via SSH tunnel. Repo auto-cloned from OE_REPO_URL; AgilePruner fork auto-cloned from AP_FORK_URL on first boot.` |
+| Template Description | `Qwen3-VL 8B served via vLLM (patched with AgilePruner visual-token pre-pruning) on :8003 + OE-VLM-Demo FastAPI backend on :8000 + Vite dev server on :5173. All three reached via SSH tunnel. Repo auto-cloned from OE_REPO_URL; AgilePruner patches applied from vllm-patches/ in the cloned repo on first boot.` |
 
 ## 2. Docker Repository And Environment
 
@@ -24,7 +24,7 @@ Console template editor. Keep it open side-by-side with the Vast Console.
 | Version Tag | `v0.20.0-cuda-13.0` (pick from dropdown) |
 
 Same image as the open-webui template. vLLM 0.20 ships pre-installed; no
-install delay. **The AgilePruner fork must be pinned to the same v0.20.0** so
+install delay. **The AgilePruner patches must be pinned to the same v0.20.0** so
 the Python file overlay works without a C++ rebuild.
 
 ## 3. Docker Options (port mapping)
@@ -69,8 +69,6 @@ Paste each row as a Key/Value pair. Order does not matter.
 | `OE_FRONTEND_PORT` | `5173` |
 | `OE_ENABLE_FRONTEND` | `true` |
 | `OE_ENABLE_BACKEND` | `true` |
-| `AP_FORK_URL` | `https://github.com/AnVu10/vllm.git` |
-| `AP_FORK_BRANCH` | `agilepruner-qwen3vl` |
 | `AP_AGILEPRUNER_ENABLE` | `true` |
 | `AP_AGILEPRUNER_RATIO` | `0.5` |
 | `AP_AGILEPRUNER_TAU_MAX` | `0.25` |
@@ -108,27 +106,30 @@ Paste each row as a Key/Value pair. Order does not matter.
 
 ### AgilePruner-specific notes
 
-- **Fork must be pinned to v0.20.0.** The Docker image ships vLLM 0.20.0; the
-  AgilePruner fork must base off the same tag so the Python files overlay
-  cleanly. If the fork is pinned elsewhere, the overlay may break vLLM at
-  import time. See `AGILEPRUNER.md` in the fork for the exact pin.
-- **`AP_AGILEPRUNER_ENABLE=true` does TWO things:** clones the fork + overlays
-  Python files AND appends the four `--agilepruner-*` CLI flags to vllm serve.
-  Set it to `false` to bypass both (stock boot, no fork clone). Setting it
-  to `true` but omitting the CLI flags from your custom VLLM_ARGS is not
-  supported via env vars — the flags are added unconditionally inside
-  onstart when this is true.
+- **Patches live in the OE-VLM-Demo repo** at `vllm-patches/vllm/...`. The
+  template's onstart copies them into the pre-installed vLLM site-packages
+  at boot. No separate vLLM fork repo is involved.
+- **Pin must match the Docker image.** `vllm-patches/PIN.txt` records the
+  vLLM version the patches were built against (currently `v0.20.0`). The
+  Docker image is `vastai/vllm:v0.20.0-cuda-13.0` — same version. If you
+  bump either the image tag OR the patches, update both together.
+- **`AP_AGILEPRUNER_ENABLE=true` does TWO things:** overlays patched Python
+  files onto pre-installed vLLM AND appends the four `--agilepruner-*` CLI
+  flags to vllm serve. Set to `false` to bypass both (stock boot, no
+  overlay).
 - **`AP_AGILEPRUNER_ERANK_AVG=95.0`** is the LLaVA training-set value from
   the paper (Appendix D). NOT calibrated for Qwen3-VL. The pruning still
-  works correctly but the adaptive threshold scale is paper-default.
+  works correctly; only the adaptive-threshold scale is paper-default.
 - **Backups are one-time.** The overlay creates `*.orig` backups on first
-  run only. If you upgrade the fork and re-run, the originals are NOT
-  re-saved; you'd revert to the previous AgilePruner version, not stock
-  vLLM. To recover stock vLLM, see the troubleshooting "revert" row in
-  the README.
-- **Fork clone failures are non-fatal.** If `git clone` of the fork fails
-  (private repo without PAT, network), the script logs a warning and falls
-  back to stock vLLM. The pod still boots; you just don't get AgilePruner.
+  run only. If you update `vllm-patches/` and re-run, originals are NOT
+  re-saved — you'd revert to the previous AgilePruner version, not stock.
+  To recover stock, see the troubleshooting "revert" row in the README.
+- **Missing patches dir is non-fatal.** If `$REPO_DIR/vllm-patches/` is
+  absent (e.g., you cloned the wrong branch), the script logs a warning
+  and falls back to stock vLLM. The pod still boots; just no AgilePruner.
+- **Pin mismatch warning.** The overlay compares `PIN.txt` against the
+  installed `vllm.__version__`. If they differ, a warning is logged but
+  the overlay proceeds (set `AP_AGILEPRUNER_ENABLE=false` to abort).
 
 ### VLLM_ARGS note
 
@@ -172,8 +173,8 @@ version-controlled.
   VRAM** (RTX 3090, 4090, A5000, A6000). Smaller GPUs cannot fit
   Qwen3-VL-8B at fp16 + 32k context.
 - **Persistent storage**: pick an offer with a "Volume" / persistent
-  `/workspace`. Otherwise the model weights, repo clone, Python venv, and
-  AgilePruner fork clone all redownload on every restart (~20 min penalty).
+  `/workspace`. Otherwise the model weights, repo clone, and Python venv
+  all redownload on every restart (~20 min penalty).
 
 ## 7. Verification after save
 

@@ -26,9 +26,6 @@ OE_ENABLE_BACKEND="${OE_ENABLE_BACKEND:-true}"
 OE_ENABLE_FRONTEND="${OE_ENABLE_FRONTEND:-true}"
 
 # AgilePruner-specific configuration
-AP_FORK_URL="${AP_FORK_URL:-https://github.com/AnVu10/vllm.git}"
-AP_FORK_BRANCH="${AP_FORK_BRANCH:-agilepruner-qwen3vl}"
-AP_FORK_DIR="${AP_FORK_DIR:-/workspace/vllm-fork}"
 AP_AGILEPRUNER_ENABLE="${AP_AGILEPRUNER_ENABLE:-true}"
 AP_AGILEPRUNER_RATIO="${AP_AGILEPRUNER_RATIO:-0.5}"
 AP_AGILEPRUNER_TAU_MAX="${AP_AGILEPRUNER_TAU_MAX:-0.25}"
@@ -76,49 +73,46 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# [3/6] AgilePruner patch: clone the fork and overlay its Python files onto
-# the pre-installed vLLM. No C++ rebuild because the fork is pinned to the
-# same version (v0.20.0) as the Docker image.
+# [3/6] AgilePruner patch: overlay the in-tree vllm-patches/ onto the
+# pre-installed vLLM. The patch files live in OE-VLM-Demo at vllm-patches/
+# (already cloned in step [2/6]). Pin: vLLM v0.20.0 — matches the Docker
+# image. No git clone of a vLLM fork required.
 # -----------------------------------------------------------------------------
 if [ "$AP_AGILEPRUNER_ENABLE" = "true" ]; then
-  if [ -d "$AP_FORK_DIR/.git" ]; then
-    echo "[3/6] AgilePruner fork already at $AP_FORK_DIR. Pulling latest..."
-    git -C "$AP_FORK_DIR" fetch origin "$AP_FORK_BRANCH" || true
-    git -C "$AP_FORK_DIR" checkout "$AP_FORK_BRANCH" || true
-    git -C "$AP_FORK_DIR" pull --ff-only origin "$AP_FORK_BRANCH" || true
-  else
-    echo "[3/6] Cloning AgilePruner fork ${AP_FORK_URL}@${AP_FORK_BRANCH} into $AP_FORK_DIR..."
-    if ! git clone --depth 1 --branch "$AP_FORK_BRANCH" "$AP_FORK_URL" "$AP_FORK_DIR"; then
-      echo "[3/6] WARNING: clone failed. Falling back to stock vLLM (AgilePruner disabled)."
-      AP_AGILEPRUNER_ENABLE=false
-    fi
-  fi
-fi
-
-if [ "$AP_AGILEPRUNER_ENABLE" = "true" ]; then
-  VLLM_SITE=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__))" 2>/dev/null || true)
-  if [ -z "$VLLM_SITE" ] || [ ! -d "$VLLM_SITE" ]; then
-    echo "[3/6] WARNING: could not locate pre-installed vLLM. AgilePruner disabled."
+  AP_PATCHES_DIR="$REPO_DIR/vllm-patches"
+  if [ ! -d "$AP_PATCHES_DIR" ]; then
+    echo "[3/6] WARNING: $AP_PATCHES_DIR not found. AgilePruner disabled."
     AP_AGILEPRUNER_ENABLE=false
   else
-    echo "[3/6] Overlaying AgilePruner files into $VLLM_SITE ..."
-    SENTINEL="$VLLM_SITE/.agilepruner_patched"
-    # Backup originals once.
-    if [ ! -f "$SENTINEL" ]; then
-      cp -n "$VLLM_SITE/model_executor/models/qwen3_vl.py" \
-            "$VLLM_SITE/model_executor/models/qwen3_vl.py.orig" 2>/dev/null || true
-      cp -n "$VLLM_SITE/engine/arg_utils.py" \
-            "$VLLM_SITE/engine/arg_utils.py.orig" 2>/dev/null || true
+    # Verify pin matches the Docker image's vLLM version.
+    PIN_EXPECTED=$(cat "$AP_PATCHES_DIR/PIN.txt" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+    VLLM_VERSION=$(python3 -c "import vllm; print('v' + vllm.__version__)" 2>/dev/null || echo "unknown")
+    if [ "$PIN_EXPECTED" != "$VLLM_VERSION" ]; then
+      echo "[3/6] WARNING: pin mismatch (patches expect $PIN_EXPECTED, image has $VLLM_VERSION)."
+      echo "       Overlay will proceed but may break vLLM. Set AP_AGILEPRUNER_ENABLE=false to skip."
     fi
-    # Overlay the fork's files.
-    cp "$AP_FORK_DIR/vllm/model_executor/models/qwen3_vl.py" \
-       "$VLLM_SITE/model_executor/models/qwen3_vl.py"
-    cp "$AP_FORK_DIR/vllm/model_executor/models/agilepruner.py" \
-       "$VLLM_SITE/model_executor/models/agilepruner.py"
-    cp "$AP_FORK_DIR/vllm/engine/arg_utils.py" \
-       "$VLLM_SITE/engine/arg_utils.py"
-    touch "$SENTINEL"
-    echo "[3/6] AgilePruner patch applied. Originals saved as *.orig (one-time)."
+    VLLM_SITE=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__))" 2>/dev/null || true)
+    if [ -z "$VLLM_SITE" ] || [ ! -d "$VLLM_SITE" ]; then
+      echo "[3/6] WARNING: could not locate pre-installed vLLM. AgilePruner disabled."
+      AP_AGILEPRUNER_ENABLE=false
+    else
+      echo "[3/6] Overlaying vllm-patches/ into $VLLM_SITE ..."
+      SENTINEL="$VLLM_SITE/.agilepruner_patched"
+      if [ ! -f "$SENTINEL" ]; then
+        cp -n "$VLLM_SITE/model_executor/models/qwen3_vl.py" \
+              "$VLLM_SITE/model_executor/models/qwen3_vl.py.orig" 2>/dev/null || true
+        cp -n "$VLLM_SITE/engine/arg_utils.py" \
+              "$VLLM_SITE/engine/arg_utils.py.orig" 2>/dev/null || true
+      fi
+      cp "$AP_PATCHES_DIR/vllm/model_executor/models/qwen3_vl.py" \
+         "$VLLM_SITE/model_executor/models/qwen3_vl.py"
+      cp "$AP_PATCHES_DIR/vllm/model_executor/models/agilepruner.py" \
+         "$VLLM_SITE/model_executor/models/agilepruner.py"
+      cp "$AP_PATCHES_DIR/vllm/engine/arg_utils.py" \
+         "$VLLM_SITE/engine/arg_utils.py"
+      touch "$SENTINEL"
+      echo "[3/6] AgilePruner patch applied (pin $PIN_EXPECTED). Originals saved as *.orig (one-time)."
+    fi
   fi
 else
   echo "[3/6] AP_AGILEPRUNER_ENABLE=false — using stock vLLM."
