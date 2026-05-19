@@ -84,14 +84,24 @@ if [ "$AP_AGILEPRUNER_ENABLE" = "true" ]; then
     echo "[3/6] WARNING: $AP_PATCHES_DIR not found. AgilePruner disabled."
     AP_AGILEPRUNER_ENABLE=false
   else
+    # Resolve the Python interpreter that has vllm installed. The vast image
+    # often has vllm in a different venv (e.g. /venv/main/bin/python) than
+    # the system 'python3' shim, so a bare `python3 -c "import vllm"` fails
+    # even though the `vllm` CLI works. The CLI's shebang points at the right
+    # interpreter; fall back to python3 only if the shebang parse fails.
+    VLLM_PY=$(head -1 "$(which vllm 2>/dev/null)" 2>/dev/null | sed 's|^#!||' | awk '{print $1}' || true)
+    if [ -z "$VLLM_PY" ] || [ ! -x "$VLLM_PY" ]; then
+      VLLM_PY=python3
+    fi
+    echo "[3/6] Using Python interpreter: $VLLM_PY"
     # Verify pin matches the Docker image's vLLM version.
     PIN_EXPECTED=$(cat "$AP_PATCHES_DIR/PIN.txt" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
-    VLLM_VERSION=$(python3 -c "import vllm; print('v' + vllm.__version__)" 2>/dev/null || echo "unknown")
+    VLLM_VERSION=$("$VLLM_PY" -c "import vllm; print('v' + vllm.__version__)" 2>/dev/null || echo "unknown")
     if [ "$PIN_EXPECTED" != "$VLLM_VERSION" ]; then
       echo "[3/6] WARNING: pin mismatch (patches expect $PIN_EXPECTED, image has $VLLM_VERSION)."
       echo "       Overlay will proceed but may break vLLM. Set AP_AGILEPRUNER_ENABLE=false to skip."
     fi
-    VLLM_SITE=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__))" 2>/dev/null || true)
+    VLLM_SITE=$("$VLLM_PY" -c "import vllm, os; print(os.path.dirname(vllm.__file__))" 2>/dev/null || true)
     if [ -z "$VLLM_SITE" ] || [ ! -d "$VLLM_SITE" ]; then
       echo "[3/6] WARNING: could not locate pre-installed vLLM. AgilePruner disabled."
       AP_AGILEPRUNER_ENABLE=false
