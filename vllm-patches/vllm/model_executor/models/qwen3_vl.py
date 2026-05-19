@@ -2152,6 +2152,55 @@ class Qwen3VLForConditionalGeneration(
         # Split concatenated embeddings for each image item.
         merge_size = self.visual.spatial_merge_size
         sizes = (grid_thw.prod(-1) // merge_size // merge_size).tolist()
+
+        # AgilePruner: per-image selection of K visual tokens. Only runs when
+        # enabled in the model config (otherwise no-op, identical to upstream
+        # behaviour). The count K matches what stage-1 (placeholder emission)
+        # used, via _get_pruned_count, so the scatter at get_input_embeddings
+        # remains consistent.
+        ap_enable = getattr(self.model_config, "agilepruner_enable", False)
+        if ap_enable:
+            from vllm.model_executor.models.agilepruner import (
+                agilepruner_select,
+                compute_erank,
+                compute_l2_norm_score,
+            )
+            ap_ratio = getattr(self.model_config, "agilepruner_ratio", 0.5)
+            ap_tau_max = getattr(self.model_config, "agilepruner_tau_max", 0.25)
+            ap_erank_avg = getattr(self.model_config, "agilepruner_erank_avg", 95.0)
+
+            # Slice flat tensor into per-image segments, prune each, re-flatten.
+            new_segments: list[torch.Tensor] = []
+            new_sizes: list[int] = []
+            offset = 0
+            for i, n_i in enumerate(sizes):
+                seg = image_embeds[offset : offset + n_i]
+                offset += n_i
+                if n_i <= 4 or ap_ratio >= 1.0:
+                    new_segments.append(seg)
+                    new_sizes.append(n_i)
+                    continue
+                score = compute_l2_norm_score(seg)
+                kept = agilepruner_select(
+                    embeds=seg,
+                    score=score,
+                    ratio=ap_ratio,
+                    tau_max=ap_tau_max,
+                    erank_avg=ap_erank_avg,
+                )
+                pruned = seg[kept]
+                new_segments.append(pruned)
+                new_sizes.append(pruned.shape[0])
+                logger.debug(
+                    "[AgilePruner] image_idx=%d N=%d K=%d erank=%.2f",
+                    i,
+                    n_i,
+                    pruned.shape[0],
+                    compute_erank(seg),
+                )
+            image_embeds = torch.cat(new_segments, dim=0) if new_segments else image_embeds
+            sizes = new_sizes
+
         return image_embeds.split(sizes)
 
     def _process_video_input(
