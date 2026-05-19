@@ -48,9 +48,25 @@ def compute_surrogate_cls_score(attn: torch.Tensor) -> torch.Tensor:
     return a.mean(dim=(0, 1))  # (N,)
 
 
+def compute_l2_norm_score(embeds: torch.Tensor) -> torch.Tensor:
+    """L2-norm-based importance surrogate for Qwen3-VL.
+
+    Score for token j = ||embed_j||_2.
+    Use this when full attention weights are unavailable (FlashAttention
+    fused kernels in vLLM don't materialise the (H,N,N) softmax matrix).
+
+    Args:
+        embeds: (N, D) post-projector visual embeddings (any dtype).
+
+    Returns:
+        (N,) per-token L2 norm, float32 on the same device.
+    """
+    return embeds.float().norm(dim=1)  # (N,)
+
+
 def agilepruner_select(
     embeds: torch.Tensor,
-    attn: torch.Tensor,
+    score: torch.Tensor,
     ratio: float,
     tau_max: float,
     erank_avg: float,
@@ -59,14 +75,16 @@ def agilepruner_select(
 
     Args:
         embeds: (N, D) post-projector visual embeddings (any dtype).
-        attn:   (H, N, N) full-attention layer weights for the same N tokens.
+        score:  (N,) per-token importance score. Use compute_l2_norm_score
+                or compute_surrogate_cls_score (if attention weights are
+                available) to produce this.
         ratio:  K = round(ratio × N), floored to 4 (or N if N ≤ 4).
         tau_max: cap on the per-step similarity threshold.
         erank_avg: dataset-mean erank used to normalise τ.
 
     Returns:
         1D LongTensor of `kept` indices, length = K (or N when N ≤ 4 or ratio = 1).
-        Order = attention-rank order, NOT spatial.
+        Order = score-rank order, NOT spatial.
     """
     N, _ = embeds.shape
     device = embeds.device
@@ -77,14 +95,12 @@ def agilepruner_select(
     K = max(round(ratio * N), 4)
     K = min(K, N)
 
-    score = compute_surrogate_cls_score(attn)  # (N,) float32 on attn.device
-    score = score.to(device)
-
+    s = score.to(device).float()
     erank_input = compute_erank(embeds)
     tau_base = (erank_input / erank_avg) * 0.01
 
-    ranked = score.argsort(descending=True).tolist()
-    X = F.normalize(embeds.float(), dim=1)  # cosine via dot product
+    ranked = s.argsort(descending=True).tolist()
+    X = F.normalize(embeds.float(), dim=1)
 
     alive = torch.ones(N, dtype=torch.bool, device=device)
     kept: list[int] = []
@@ -95,7 +111,7 @@ def agilepruner_select(
         tau_i = min(order_i * tau_base, tau_max)
         kept.append(j)
         alive[j] = False
-        cos_to_j = (X @ X[j])  # (N,)
+        cos_to_j = (X @ X[j])
         d = 1.0 - cos_to_j
         alive = alive & (d >= tau_i)
         if len(kept) >= K:

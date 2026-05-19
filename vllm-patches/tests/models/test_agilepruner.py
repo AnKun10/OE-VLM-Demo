@@ -3,10 +3,12 @@ import math
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 from vllm.model_executor.models.agilepruner import (
     agilepruner_select,
     compute_erank,
+    compute_l2_norm_score,
     compute_surrogate_cls_score,
 )
 
@@ -76,8 +78,9 @@ def test_select_returns_exact_K():
     N, D = 20, 64
     embeds = torch.randn(N, D)
     attn = torch.softmax(torch.randn(2, N, N), dim=-1)
+    score = compute_surrogate_cls_score(attn)
     indices = agilepruner_select(
-        embeds, attn, ratio=0.5, tau_max=0.25, erank_avg=95.0
+        embeds, score, ratio=0.5, tau_max=0.25, erank_avg=95.0
     )
     assert len(indices) == 10
     assert len(set(indices.tolist())) == 10  # no duplicates
@@ -88,8 +91,9 @@ def test_select_ratio_one_returns_all():
     N, D = 12, 32
     embeds = torch.randn(N, D)
     attn = torch.softmax(torch.randn(1, N, N), dim=-1)
+    score = compute_surrogate_cls_score(attn)
     indices = agilepruner_select(
-        embeds, attn, ratio=1.0, tau_max=0.25, erank_avg=95.0
+        embeds, score, ratio=1.0, tau_max=0.25, erank_avg=95.0
     )
     assert len(indices) == N
     assert sorted(indices.tolist()) == list(range(N))
@@ -100,8 +104,9 @@ def test_select_floor_K_is_4():
     N, D = 10, 32
     embeds = torch.randn(N, D)
     attn = torch.softmax(torch.randn(1, N, N), dim=-1)
+    score = compute_surrogate_cls_score(attn)
     indices = agilepruner_select(
-        embeds, attn, ratio=0.1, tau_max=0.25, erank_avg=95.0
+        embeds, score, ratio=0.1, tau_max=0.25, erank_avg=95.0
     )
     assert len(indices) == 4
 
@@ -111,8 +116,9 @@ def test_select_small_N_skips_pruning():
     N, D = 3, 32
     embeds = torch.randn(N, D)
     attn = torch.softmax(torch.randn(1, N, N), dim=-1)
+    score = compute_surrogate_cls_score(attn)
     indices = agilepruner_select(
-        embeds, attn, ratio=0.5, tau_max=0.25, erank_avg=95.0
+        embeds, score, ratio=0.5, tau_max=0.25, erank_avg=95.0
     )
     assert sorted(indices.tolist()) == [0, 1, 2]
 
@@ -124,8 +130,9 @@ def test_select_top_attention_token_always_kept():
     attn = torch.zeros(1, N, N)
     attn[:, :, 7] = 1.0  # Token 7 is the global-importance peak.
     attn[:, 7, 7] = 0.0
+    score = compute_surrogate_cls_score(attn)
     indices = agilepruner_select(
-        embeds, attn, ratio=0.3, tau_max=0.25, erank_avg=95.0
+        embeds, score, ratio=0.3, tau_max=0.25, erank_avg=95.0
     )
     assert 7 in indices.tolist()
 
@@ -137,7 +144,27 @@ def test_select_fallback_when_threshold_drains_pool():
     base = torch.randn(1, D)
     embeds = base.expand(N, D).clone() + 1e-6 * torch.randn(N, D)
     attn = torch.softmax(torch.randn(1, N, N), dim=-1)
+    score = compute_surrogate_cls_score(attn)
     indices = agilepruner_select(
-        embeds, attn, ratio=0.5, tau_max=0.25, erank_avg=95.0
+        embeds, score, ratio=0.5, tau_max=0.25, erank_avg=95.0
     )
     assert len(indices) == 10
+
+
+def test_l2_norm_score_unit_vectors():
+    # All rows unit norm → all scores ≈ 1.0.
+    N, D = 8, 16
+    X = F.normalize(torch.randn(N, D), dim=1)
+    scores = compute_l2_norm_score(X)
+    assert scores.shape == (N,)
+    assert torch.allclose(scores, torch.ones(N), atol=1e-5)
+
+
+def test_l2_norm_score_known_magnitudes():
+    # Construct rows with prescribed norms; verify scores match.
+    N, D = 5, 16
+    base = F.normalize(torch.randn(N, D), dim=1)
+    magnitudes = torch.tensor([1.0, 2.0, 0.5, 3.0, 1.5])
+    X = base * magnitudes.unsqueeze(1)
+    scores = compute_l2_norm_score(X)
+    assert torch.allclose(scores, magnitudes, atol=1e-5)
