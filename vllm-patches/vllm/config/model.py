@@ -335,7 +335,7 @@ class ModelConfig:
     agilepruner_enable: bool = False
     """Enable AgilePruner visual-token pruning for VL models."""
     agilepruner_ratio: float = 0.5
-    """Fraction of visual tokens to KEEP (0, 1]. Used when agilepruner_enable=True."""
+    """Fraction of visual tokens to keep (0, 1]. Used when agilepruner_enable=True."""
     agilepruner_tau_max: float = 0.25
     """Maximum temperature tau for surrogate CLS score. Must be > 0."""
     agilepruner_erank_avg: float = 95.0

@@ -747,6 +747,10 @@ class EngineArgs:
                 raise ValueError(
                     f"--agilepruner-tau-max must be > 0, got {self.agilepruner_tau_max}"
                 )
+            if self.agilepruner_erank_avg <= 0.0:
+                raise ValueError(
+                    f"--agilepruner-erank-avg must be > 0, got {self.agilepruner_erank_avg}"
+                )
 
     @staticmethod
     def add_cli_args(parser: FlexibleArgumentParser) -> FlexibleArgumentParser:
