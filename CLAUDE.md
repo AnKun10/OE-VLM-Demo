@@ -57,7 +57,9 @@ The `qwen3-vl-8b-vllm` model runs on a remote GPU host (vast.ai) and is reached 
    python scripts/smoke_qwen3_vl.py path/to/image.jpg "What is in this image?"
    ```
 
-**AgilePruner mode (optional):** to enable visual-token pre-pruning, install the fork at `https://github.com/AnVu10/vllm` (branch `agilepruner-qwen3vl`) on the GPU host and add these flags:
+**AgilePruner mode (optional):** to enable visual-token pre-pruning, use the sibling Vast template `vast-templates/oe-vlm-demo-agilepruner/`. The patches live in this repo at `vllm-patches/vllm/...` (pinned to vLLM v0.20.0, matching the Docker image). The template's onstart overlays them onto the pre-installed vLLM at boot — no separate fork repo, no `pip install`, no C++ rebuild.
+
+The serve command with AgilePruner flags:
 
 ```bash
 vllm serve Qwen/Qwen3-VL-8B-Instruct \
@@ -71,13 +73,21 @@ vllm serve Qwen/Qwen3-VL-8B-Instruct \
     --agilepruner-erank-avg 95.0
 ```
 
+(The vast template adds these flags automatically from `AP_AGILEPRUNER_*` env vars when `AP_AGILEPRUNER_ENABLE=true`.)
+
 Smoke test (local):
 ```bash
 cd backend
 python scripts/smoke_agilepruner.py path/to/image.jpg "Describe this image"
 ```
 
-**Disclaimer:** `--agilepruner-erank-avg 95.0` is the LLaVA training-set value from the paper (Appendix D); it is NOT calibrated for Qwen3-VL. The pruning still works correctly but the adaptive threshold scale is not tuned for this model family. See the fork's `AGILEPRUNER.md` for details.
+Local CPU unit tests for the helper module (no GPU required):
+```bash
+cd vllm-patches
+PYTHONPATH=. pytest tests/models/test_agilepruner.py -v
+```
+
+**Disclaimer:** `--agilepruner-erank-avg 95.0` is the LLaVA training-set value from the paper (Appendix D); it is NOT calibrated for Qwen3-VL. The pruning still works correctly but the adaptive threshold scale is not tuned for this model family. See `vllm-patches/README.md` for details.
 
 ## Architecture
 
