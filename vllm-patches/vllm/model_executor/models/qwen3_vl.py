@@ -24,6 +24,7 @@
 # limitations under the License.
 """Inference-only Qwen3VL model compatible with HuggingFace weights."""
 
+import logging
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from functools import lru_cache, partial
 from itertools import islice
@@ -2176,6 +2177,8 @@ class Qwen3VLForConditionalGeneration(
             for i, n_i in enumerate(sizes):
                 seg = image_embeds[offset : offset + n_i]
                 offset += n_i
+                # Skip score/erank computation for trivial images;
+                # agilepruner_select would return arange(N) anyway.
                 if n_i <= 4 or ap_ratio >= 1.0:
                     new_segments.append(seg)
                     new_sizes.append(n_i)
@@ -2191,13 +2194,14 @@ class Qwen3VLForConditionalGeneration(
                 pruned = seg[kept]
                 new_segments.append(pruned)
                 new_sizes.append(pruned.shape[0])
-                logger.debug(
-                    "[AgilePruner] image_idx=%d N=%d K=%d erank=%.2f",
-                    i,
-                    n_i,
-                    pruned.shape[0],
-                    compute_erank(seg),
-                )
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "[AgilePruner] image_idx=%d N=%d K=%d erank=%.2f",
+                        i,
+                        n_i,
+                        pruned.shape[0],
+                        compute_erank(seg),
+                    )
             image_embeds = torch.cat(new_segments, dim=0) if new_segments else image_embeds
             sizes = new_sizes
 
