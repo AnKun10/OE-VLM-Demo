@@ -113,6 +113,8 @@ if [ "$AP_AGILEPRUNER_ENABLE" = "true" ]; then
               "$VLLM_SITE/model_executor/models/qwen3_vl.py.orig" 2>/dev/null || true
         cp -n "$VLLM_SITE/engine/arg_utils.py" \
               "$VLLM_SITE/engine/arg_utils.py.orig" 2>/dev/null || true
+        cp -n "$VLLM_SITE/config/model.py" \
+              "$VLLM_SITE/config/model.py.orig" 2>/dev/null || true
       fi
       cp "$AP_PATCHES_DIR/vllm/model_executor/models/qwen3_vl.py" \
          "$VLLM_SITE/model_executor/models/qwen3_vl.py"
@@ -120,6 +122,8 @@ if [ "$AP_AGILEPRUNER_ENABLE" = "true" ]; then
          "$VLLM_SITE/model_executor/models/agilepruner.py"
       cp "$AP_PATCHES_DIR/vllm/engine/arg_utils.py" \
          "$VLLM_SITE/engine/arg_utils.py"
+      cp "$AP_PATCHES_DIR/vllm/config/model.py" \
+         "$VLLM_SITE/config/model.py"
       touch "$SENTINEL"
       echo "[3/6] AgilePruner patch applied (pin $PIN_EXPECTED). Originals saved as *.orig (one-time)."
     fi
