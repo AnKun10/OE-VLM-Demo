@@ -50,45 +50,41 @@ https://arxiv.org/abs/2603.01236). Three pieces:
   token; prune cosine-similar neighbours. τ_i = min(order_i × tau_base,
   tau_max) where tau_base = (erank_input / erank_avg) × 0.01.
 
-## MRoPE position handling (EVS piggyback)
+## MRoPE position handling
 
-vLLM v0.20.0 assigns 2D-MRoPE positions to visual tokens in two phases:
+vLLM v0.20.0 assigns 2D-MRoPE positions to visual tokens in `_iter_mm_grid_hw` →
+`_get_mrope_input_positions`. The upstream image branch hardcodes
+`actual_num_tokens = grid_h * grid_w`, assuming `mm_position.length` equals
+the grid product. AgilePruner violates this by compressing the placeholder
+count to K < grid product.
 
-- **Phase 1** (`get_mrope_input_positions`, runs before vision encoder):
-  generates a dense grid of positions based on `image_grid_thw`. With
-  AgilePruner active, the placeholder length is K < grid product, which
-  would normally crash Phase 1. Our patches (`_iter_mm_grid_hw` image
-  branch + new `elif actual < expected` partial-grid branch) make Phase 1
-  emit the right COUNT of positions without crashing; the position VALUES
-  here are placeholders.
+Our patches fix the resulting crash:
 
-- **Phase 2** (`recompute_mrope_positions` in `gpu_model_runner._gather_mm_embeddings`,
-  runs after vision encoder): reads the LAST 5 CHANNELS of each visual
-  embedding to compute the actual MRoPE positions. We attach these channels
-  in `_process_image_input` via `append_mrope_position_channels`. The
-  5-channel layout is:
+- `_iter_mm_grid_hw` IMAGE branch now yields `mm_feature.mm_position.length`
+  (mirroring the video branch's existing behaviour).
+- `_get_mrope_input_positions` gains an `elif actual_num_tokens <
+  expected_tokens_per_frame:` branch that emits exactly K position columns
+  (rather than the full grid).
 
-  | Slot | Field | Our value (pruned image) |
-  |---|---|---|
-  | 0 | t (frame index) | 0 |
-  | 1 | h (height coord in post-merger grid) | original h_pos of kept token |
-  | 2 | w (width coord) | original w_pos of kept token |
-  | 3 | is_vision_start | 0 |
-  | 4 | is_video (routing flag) | **1** |
+**Known limitation (Bug #2):** the K position columns emitted here are the
+FIRST-K row-major grid positions, NOT the actual (h, w) coordinates of the
+retained tokens. The K retained embeddings are in attention-rank order so
+the position-to-content mapping is scrambled. This is acceptable for
+descriptive prompts (e.g., "what colors are in this image?") but may
+degrade accuracy on spatial-reasoning prompts (e.g., "where is the red
+shape?").
 
-  Slot 4 = 1 is a deliberate routing trick: it tells `recompute_mrope_positions`
-  to use the sparse-MRoPE branch (originally written for video EVS). It does
-  NOT semantically claim the content is video — the LLM still receives
-  image embeddings. Upstream may rename this channel in future versions.
+We considered the "EVS piggyback" path — set `is_multimodal_pruning_enabled
+=True` to route through vLLM's `recompute_mrope_positions` (the same code
+path video EVS uses for sparse-MRoPE position recovery). This worked
+architecturally but activated a dormant upstream bug in
+`_compute_deepstack_embeds`: the +5 channels appended to image embeddings
+break the `torch.split([visual_dim, multiscale_dim])` operation. See the
+git history for the reverted Phase 5 + Phase 2-redo commits and our
+investigation notes in `NOTES_evs_video_pipeline.md`.
 
-This piggyback is the minimum-invasion approach. An alternative would be to
-add a separate `is_pruned_image` flag in `_recompute_mrope_positions`, which
-requires modifying multiple upstream files; we kept the patch surface small.
-
-When AgilePruner is DISABLED (`--agilepruner-enable=False`), the
-`is_multimodal_pruning_enabled` flag is also False, Phase 2 is skipped,
-and the image path produces stock `(N, D)` embeddings — fully transparent
-to upstream behaviour.
+When AgilePruner is DISABLED (`--agilepruner-enable=False`), all the
+patches above are no-ops and behaviour is identical to upstream.
 
 ## Calibration caveat
 
@@ -107,7 +103,7 @@ cd <repo-root>/vllm-patches
 PYTHONPATH=. pytest tests/models/test_agilepruner.py -v
 ```
 
-Expected: 12 passes.
+Expected: 17 passes.
 
 ## Out of scope (phase 1)
 
