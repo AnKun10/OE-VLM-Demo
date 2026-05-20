@@ -369,3 +369,175 @@ pattern actually simpler.
    unconditional), but the `offset` after the media is computed differently (line 343–346):
    for 5-channel it uses `mm_pos[0:3, :].max() + base + 1` which is correct for sparse
    positions. So setting `mm_pos[4, :] = 1` for image tokens is needed.
+
+---
+
+## Verification of 4 unknowns
+
+### Unknown A: 5-channel layout (verified)
+
+- File:line of `_get_expanded_positions` (called from `_create_final_video_embeddings`):
+  `model_executor/models/qwen3_vl.py:2335` (definition), called at `2319`.
+- Tensor created at line 2356: `expanded_positions = torch.zeros(seq_len, 5, ...)`.
+- Comment at line 2358 gives the ground truth: `[t_index, h_index, w_index, is_vision_start, is_video]`.
+
+| Slot | Name | Source (video path) |
+|------|------|---------------------|
+| 0 | `t_index` | `original_mrope[..., 0]` — temporal MRoPE position from unpruned grid |
+| 1 | `h_index` | `original_mrope[..., 1]` — height MRoPE position from unpruned grid |
+| 2 | `w_index` | `original_mrope[..., 2]` — width MRoPE position from unpruned grid |
+| 3 | `is_vision_start` | `repl_token_ids.eq(vision_start_token_id)` — 1 for `<vision_start>` tokens only |
+| 4 | `is_video` | `is_video_embed` — 1 for actual video embedding tokens (video_token_id positions) |
+
+- **Position in tensor:** last 5 channels, shape `(full_frame_seq_len, D+5)`. Channels are
+  **appended** via `torch.cat([merged_embeddings, expanded_positions], dim=-1)` at line 2331.
+- `_recompute_mrope_positions` reads `mm[:, -5:]` (line 2648–2649) — confirmed last 5.
+
+**For retained video tokens** (`retention_mask=True`, `is_video_embed=True`):
+- Slots 0–2: copied from `original_mrope[full_is_video_embed][retention_mask]` (line 2396–2398) — original unpruned-grid positions of the kept tokens.
+- Slot 3: 0 (not a `vision_start` token).
+- Slot 4: 1.
+
+**For indicator tokens** (not video embeds — `<vision_start>`, timestamp text, `<vision_end>`):
+- Slots 0–2: copied from `original_mrope[~full_is_video_embed]` (line 2399) — their positions from the unpruned sequence.
+- Slot 3: 1 only for `<vision_start>` tokens (line 2400); 0 for all other indicators.
+- Slot 4: 0 (line 2401).
+
+**Image path (`_postprocess_image_embeds_evs`, line 2135):**
+`compute_mrope_for_media` returns `(N, 4)` = `[t, h, w, llm_grid_w]`, then a dummy zero
+column is appended to make 5 channels. So image channel layout is
+`[t, h, w, llm_grid_w, 0]` — structurally different from video's
+`[t, h, w, is_vision_start, is_video]`. Channel 4 is always 0 (not 1) for stock images.
+This means `has_video_tokens = False` in `evs.recompute_mrope_positions` (line 251) for
+images, so the timestamp-adjustment branch is skipped and simpler position-write logic
+runs (lines 332–338). Also channel 3 for images carries `llm_grid_w` not `is_vision_start`.
+
+**Docstring discrepancy:** `evs.py` line 198 says channel 4 is `is_vision`; `qwen3_vl.py`
+comment at line 2358 says `is_video`. Code semantics: flag for video embedding tokens.
+
+---
+
+### Unknown B: Phase 2 trigger condition
+
+- **Caller:** `vllm/v1/worker/gpu_model_runner.py` line 2993–3005, inside `_gather_mm_embeddings`.
+- **Trigger condition** (line 2993): `if self.is_multimodal_pruning_enabled and self.uses_mrope`.
+- `is_multimodal_pruning_enabled` is set at model load (line 4891–4894):
+  ```python
+  self.is_multimodal_pruning_enabled = (
+      supports_multimodal_pruning(self.get_model())
+      and mm_config is not None
+      and mm_config.is_multimodal_pruning_enabled()
+  )
+  ```
+  This requires the model class to declare `supports_multimodal_pruning: ClassVar[Literal[True]] = True`
+  AND the vLLM multimodal config to have pruning enabled.
+- **Fires for:** every request with multimodal data when both conditions are satisfied —
+  it is NOT gated on whether pruning actually happened for this specific request. It runs
+  unconditionally for all prefill steps when the flag is set.
+- **Does NOT fire for:** requests where `is_multimodal_pruning_enabled=False` (stock
+  Qwen3-VL without our patch, or `mm_config.is_multimodal_pruning_enabled()` returning
+  False) OR where `uses_mrope=False`.
+- **No other callers:** search of `vllm/v1/engine/` found no matches for
+  `recompute_mrope_positions`.
+
+---
+
+### Unknown C: Stock image embedding flow — does it have extras?
+
+- **`_process_image_input`** (line 2088): returns a tuple of tensors each shape `(N, D)` —
+  plain visual hidden dim only, NO extra channels. Split is per-image via `image_embeds.split(sizes)`
+  at line 2108.
+- **Extra channels added at:** `_postprocess_image_embeds_evs` (line 2135), called
+  ONLY when `self.is_multimodal_pruning_enabled` (line 2155). The 5th channel (dummy=0)
+  is appended there, giving shape `(N, D+5)`.
+- **Stock path (no pruning flag):** `_postprocess_image_embeds_evs` returns the split
+  tuple unchanged (line 2173 returns `image_embeds_split` as-is). Shape stays `(N, D)`.
+- **For our patch:** `_process_image_input` is the right place to insert AgilePruner
+  pruning (prune to K tokens) and attach the 5 extra channels with the correct positions
+  of retained tokens. The downstream `_postprocess_image_embeds_evs` call would then
+  see `(K, D)` and add channels, OR we bypass it and attach channels directly in
+  `_process_image_input`. Either way, channel 4 must be set to 1 (not 0) for retained
+  image tokens so `recompute_mrope_positions` uses the correct sparse-position branch.
+
+---
+
+### Unknown D: Position partial-grid branch behavior
+
+Reading `_get_mrope_input_positions` (lines 2530–2583):
+
+- **`actual_num_tokens == 0` branch** (line 2531): `continue` — frame skipped. (Video only, N/A for images.)
+- **`actual_num_tokens > expected_tokens_per_frame` branch** (line 2544): fires for the
+  "lumped placeholder" EVS case where retained tokens from multiple frames are packed
+  into the first frame. This is the ONLY place the `remainder` partial-grid sub-branch
+  exists (lines 2561–2565). The partial-grid sub-branch fires ONLY inside the lumped branch.
+- **`else` branch** (line 2566): fires when `actual_num_tokens <= expected_tokens_per_frame`,
+  which covers BOTH the normal pruned case AND our AgilePruner case where
+  `actual < expected`. The code generates a FULL dense grid regardless:
+  ```python
+  grid_indices = np.indices((1, llm_grid_h, llm_grid_w)).reshape(3, -1)
+  llm_pos_ids_list.append(grid_indices + text_len + st_idx)
+  ```
+
+**For `actual=128, expected=256`:** the `else` branch fires and generates 256 position
+columns, but the sequence only has 128 placeholder tokens. This is a length mismatch:
+the phase-1 position tensor has 256 entries for this image region, while the actual
+`input_tokens` span is only 128. `mrope_position_delta` will be miscalculated.
+
+**However:** for the image case via the current AgilePruner patch, the image branch of
+`_iter_mm_grid_hw` (line 2453–2458) always yields
+`actual_num_tokens = llm_grid_h * llm_grid_w` (hardcoded, never reads from placeholder).
+So if we shorten the placeholder to K but leave `_iter_mm_grid_hw` unchanged, `actual`
+is still reported as 256 even though the placeholder is only 128. The mismatch
+propagates into `st = offset + actual_num_tokens` (line 2572) — advancing `st` by 256
+skips past 128 real tokens into whatever follows.
+
+**Result for our case:** a new `elif actual_num_tokens < expected_tokens_per_frame`
+branch IS needed in `_get_mrope_input_positions` to generate K position columns instead
+of H*W. BUT — since phase 2 (`recompute_mrope_positions`) overwrites all positions
+anyway, the phase-1 positions just need to be the right COUNT. The branch need only emit
+`actual_num_tokens` dense positions (any values), not the spatially-correct positions.
+
+**Existing code does NOT handle `actual < expected` correctly.** This is a required
+additional patch.
+
+---
+
+### Patch surface implications
+
+Based on the above, the minimum patch surface is:
+
+- [x] **Touch `_iter_mm_grid_hw` (image branch)** — YES. Line 2458 must yield
+  `actual_num_tokens = K` (from the placeholder or encoder output length) instead of
+  `llm_grid_h * llm_grid_w`. Without this, `_get_mrope_input_positions` generates wrong
+  counts and `st` advances incorrectly.
+
+- [x] **Touch `_get_mrope_input_positions` (add new `actual < expected` branch)** — YES.
+  The `else` branch always generates H*W positions. Need `elif actual < expected` to
+  generate K positions so the phase-1 position tensor length equals the placeholder span.
+
+- [x] **Touch `_process_image_input` (or `_postprocess_image_embeds_evs`) to add 5-channel
+  format with correct retained-token positions** — YES. Stock `_process_image_input`
+  returns `(N, D)`. We must prune to `(K, D)` and attach 5 extra channels
+  `[t, h, w, is_vision_start=0, is_video=1]` for retained tokens. Channel 4 must be 1
+  (not 0) so `recompute_mrope_positions` uses the sparse-position write path.
+
+- [x] **Add `supports_multimodal_pruning: ClassVar[Literal[True]] = True` to model class**
+  — YES. Without it `is_multimodal_pruning_enabled=False` and `recompute_mrope_positions`
+  is never called. Already in our patch per earlier commits.
+
+- [ ] **Add new caller of `recompute_mrope_positions`** — NO. The existing caller in
+  `gpu_model_runner.py` line 2993 fires for ALL multimodal requests when the flag is set;
+  no new call site needed.
+
+**New unknown discovered:** For the image 5-channel format, channel 3 of stock images
+carries `llm_grid_w` (not `is_vision_start`). If we set channel 3 = 0 for pruned image
+tokens (sensible: images have no `<vision_start>` interspersed), the
+`evs.recompute_mrope_positions` logic at line 318
+(`if mm_pos.shape[0] == 5 and mm_embeddings_seen == 0 and has_video_tokens`) uses channel 3
+only when `has_video_tokens=True` (channel 4 has any 1). Since we're setting channel 4 = 1
+for image tokens, `has_video_tokens=True` triggers — but then `first_vs = (mm_pos[3, :] == 1).nonzero(...)`
+looks for `is_vision_start` markers. With channel 3 = 0 for all image tokens,
+`first_vs` will be empty, `num_timestamp_tokens = 0`, and `adjusted_for_timestamps = False`.
+This means `global_mm_start` points to the `<vision_start>` token (not adjusted), and
+`base = positions[-1, global_mm_start] + 1`. This is the correct base for images. So
+setting `channel 3 = 0, channel 4 = 1` for pruned image tokens should work correctly.
