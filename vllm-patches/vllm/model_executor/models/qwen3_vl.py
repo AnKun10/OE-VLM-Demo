@@ -28,7 +28,7 @@ import logging
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from functools import lru_cache, partial
 from itertools import islice
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 import torch
@@ -1642,6 +1642,7 @@ class Qwen3VLForConditionalGeneration(
     }
 
     supports_encoder_tp_data = True
+    supports_multimodal_pruning: ClassVar[Literal[True]] = True
 
     # To ensure correct weight loading and mapping.
     hf_to_vllm_mapper = WeightsMapper(
@@ -1685,8 +1686,12 @@ class Qwen3VLForConditionalGeneration(
                 "effect. Disable DP or set --agilepruner-enable=False."
             )
         self.video_pruning_rate = multimodal_config.video_pruning_rate
+        # AgilePruner also requires the sparse-MRoPE path: when enabled, image
+        # embeddings get 5-channel metadata that recompute_mrope_positions must
+        # read to assign correct (h, w) positions to pruned tokens.
         self.is_multimodal_pruning_enabled = (
             multimodal_config.is_multimodal_pruning_enabled()
+            or getattr(vllm_config.model_config, "agilepruner_enable", False)
         )
 
         self.use_deepstack = hasattr(config.vision_config, "deepstack_visual_indexes")
