@@ -127,3 +127,49 @@ def agilepruner_select(
                     break
 
     return torch.tensor(kept, device=device, dtype=torch.long)
+
+
+def append_mrope_position_channels(
+    embeds: torch.Tensor,
+    kept_indices: torch.Tensor,
+    grid_h: int,
+    grid_w: int,
+) -> torch.Tensor:
+    """Append 5 channels per token for vLLM's MRoPE position recompute path.
+
+    vLLM v0.20.0 reuses its EVS (Efficient Video Sampling) sparse-multimodal
+    position-assignment machinery for image pruning by reading the last 5
+    channels of the embedding tensor. The last 5 channels per token are:
+
+      [0] t  — frame index (always 0 for images)
+      [1] h  — height coord in the post-merger grid (0..grid_h-1)
+      [2] w  — width coord in the post-merger grid  (0..grid_w-1)
+      [3] is_vision_start — always 0 for pruned image tokens
+      [4] is_video — set to 1 to route through the sparse-MRoPE branch of
+          ``vllm.v1.engine.evs.recompute_mrope_positions``. This is a
+          DELIBERATE ROUTING FLAG, not a semantic claim that the content is
+          video — see vllm-patches/AGILEPRUNER.md for the rationale.
+
+    Args:
+        embeds: (K, D) the pruned visual embeddings, in attention-rank order
+                (i.e., output of ``embeds_full[agilepruner_select(...)]``).
+        kept_indices: (K,) the indices into the unpruned (N,) sequence that
+                      survived pruning. These are 1D indices into a row-major
+                      post-merger grid of shape (grid_h, grid_w).
+        grid_h: post-merger grid height (==``llm_grid_h``).
+        grid_w: post-merger grid width  (==``llm_grid_w``).
+
+    Returns:
+        (K, D + 5) embeddings with metadata channels appended.
+    """
+    K = embeds.shape[0]
+    device, dtype = embeds.device, embeds.dtype
+    h_coords = (kept_indices // grid_w).to(device=device, dtype=dtype)
+    w_coords = (kept_indices % grid_w).to(device=device, dtype=dtype)
+    zeros = torch.zeros(K, device=device, dtype=dtype)
+    ones = torch.ones(K, device=device, dtype=dtype)
+    extras = torch.stack(
+        [zeros, h_coords, w_coords, zeros, ones],
+        dim=1,
+    )  # (K, 5)
+    return torch.cat([embeds, extras], dim=1)

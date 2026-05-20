@@ -7,6 +7,7 @@ import torch.nn.functional as F
 
 from vllm.model_executor.models.agilepruner import (
     agilepruner_select,
+    append_mrope_position_channels,
     compute_erank,
     compute_l2_norm_score,
     compute_surrogate_cls_score,
@@ -168,3 +169,39 @@ def test_l2_norm_score_known_magnitudes():
     X = base * magnitudes.unsqueeze(1)
     scores = compute_l2_norm_score(X)
     assert torch.allclose(scores, magnitudes, atol=1e-5)
+
+
+def test_append_mrope_channels_shape():
+    K, D, gh, gw = 5, 64, 16, 16
+    embeds = torch.randn(K, D)
+    kept = torch.tensor([0, 7, 33, 99, 200], dtype=torch.long)
+    out = append_mrope_position_channels(embeds, kept, gh, gw)
+    assert out.shape == (K, D + 5)
+
+
+def test_append_mrope_channels_layout():
+    # Verify the last 5 channels contain [0, h, w, 0, 1] per token.
+    K, D, gh, gw = 4, 32, 8, 8
+    embeds = torch.zeros(K, D)
+    # Pick indices spanning grid: (0,0), (0,7), (3,4), (7,7)
+    kept = torch.tensor([0, 7, 28, 63], dtype=torch.long)
+    out = append_mrope_position_channels(embeds, kept, gh, gw)
+    expected_hw = torch.tensor([
+        [0.0, 0.0],
+        [0.0, 7.0],
+        [3.0, 4.0],
+        [7.0, 7.0],
+    ])
+    assert torch.allclose(out[:, D + 0], torch.zeros(K))
+    assert torch.allclose(out[:, D + 1], expected_hw[:, 0])
+    assert torch.allclose(out[:, D + 2], expected_hw[:, 1])
+    assert torch.allclose(out[:, D + 3], torch.zeros(K))
+    assert torch.allclose(out[:, D + 4], torch.ones(K))
+
+
+def test_append_mrope_channels_preserves_embeds():
+    K, D, gh, gw = 3, 16, 4, 4
+    embeds = torch.randn(K, D)
+    kept = torch.tensor([0, 5, 15], dtype=torch.long)
+    out = append_mrope_position_channels(embeds, kept, gh, gw)
+    assert torch.equal(out[:, :D], embeds)
