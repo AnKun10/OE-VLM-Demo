@@ -24,7 +24,6 @@
 # limitations under the License.
 """Inference-only Qwen3VL model compatible with HuggingFace weights."""
 
-import logging
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from functools import lru_cache, partial
 from itertools import islice
@@ -2159,77 +2158,6 @@ class Qwen3VLForConditionalGeneration(
         merge_size = self.visual.spatial_merge_size
         sizes = (grid_thw.prod(-1) // merge_size // merge_size).tolist()
 
-        # AgilePruner: per-image selection of K visual tokens. Only runs when
-        # enabled in the model config (otherwise no-op, identical to upstream
-        # behaviour). The count K matches what stage-1 (placeholder emission)
-        # used, via _get_pruned_count, so the scatter at get_input_embeddings
-        # remains consistent.
-        ap_enable = getattr(self.model_config, "agilepruner_enable", False)
-        if ap_enable:
-            from vllm.model_executor.models.agilepruner import (
-                agilepruner_select,
-                append_mrope_position_channels,
-                compute_erank,
-                compute_l2_norm_score,
-            )
-            ap_ratio = getattr(self.model_config, "agilepruner_ratio", 0.5)
-            ap_tau_max = getattr(self.model_config, "agilepruner_tau_max", 0.25)
-            ap_erank_avg = getattr(self.model_config, "agilepruner_erank_avg", 95.0)
-
-            # Slice flat tensor into per-image segments, prune each, re-flatten.
-            new_segments: list[torch.Tensor] = []
-            new_sizes: list[int] = []
-            offset = 0
-            for i, n_i in enumerate(sizes):
-                seg = image_embeds[offset : offset + n_i]
-                offset += n_i
-                # Skip score/erank computation for trivial images;
-                # agilepruner_select would return arange(N) anyway.
-                if n_i <= 4 or ap_ratio >= 1.0:
-                    new_segments.append(seg)
-                    new_sizes.append(n_i)
-                    continue
-                score = compute_l2_norm_score(seg)
-                kept = agilepruner_select(
-                    embeds=seg,
-                    score=score,
-                    ratio=ap_ratio,
-                    tau_max=ap_tau_max,
-                    erank_avg=ap_erank_avg,
-                )
-                pruned = seg[kept]
-                # Attach 5-channel MRoPE metadata so that vLLM's
-                # recompute_mrope_positions (sparse-MRoPE branch) can assign
-                # correct (t, h, w) positions to the K retained tokens.
-                # llm_grid_h / llm_grid_w are the POST-MERGER grid dims.
-                _gthw_i = grid_thw[i]
-                _merge = self.visual.spatial_merge_size
-                _llm_grid_h = int(_gthw_i[1].item()) // _merge
-                _llm_grid_w = int(_gthw_i[2].item()) // _merge
-                pruned = append_mrope_position_channels(
-                    embeds=pruned,
-                    kept_indices=kept,
-                    grid_h=_llm_grid_h,
-                    grid_w=_llm_grid_w,
-                )
-                new_segments.append(pruned)
-                new_sizes.append(pruned.shape[0])
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        "[AgilePruner] image_idx=%d N=%d K=%d erank=%.2f",
-                        i,
-                        n_i,
-                        pruned.shape[0],
-                        compute_erank(seg),
-                    )
-            image_embeds = torch.cat(new_segments, dim=0) if new_segments else image_embeds
-            sizes = new_sizes
-
-        # NOTE: When ap_enable=False OR is_video=True, image_embeds has
-        # the upstream (N, D) shape with NO extra channels.
-        # is_multimodal_pruning_enabled is also False in that case (or driven
-        # by video_pruning_rate), so recompute_mrope_positions is skipped —
-        # no contract violation with the upstream code path.
         return image_embeds.split(sizes)
 
     def _process_video_input(
@@ -2281,18 +2209,48 @@ class Qwen3VLForConditionalGeneration(
             merge_size = self.visual.spatial_merge_size
             grid_thw = image_input["image_grid_thw"]
             grid_thw_list = grid_thw.tolist()
+
+            # AgilePruner config (read once outside the loop).
+            mc = self.model_config
+            ap_enable = getattr(mc, "agilepruner_enable", False)
+            ap_ratio = getattr(mc, "agilepruner_ratio", 0.5)
+            ap_tau_max = getattr(mc, "agilepruner_tau_max", 0.25)
+            ap_erank_avg = getattr(mc, "agilepruner_erank_avg", 95.0)
+
             image_embeds_out = []
             for emb, size in zip(image_embeds_split, grid_thw_list):
+                # compute_mrope_for_media returns (N_post_merge, 4) where channels
+                # are [t, h, w, is_vision_start]. We append a 5th channel below.
                 positions = compute_mrope_for_media(size, merge_size).to(emb.device)
-                positions = torch.cat(
-                    [
-                        positions,
-                        torch.zeros_like(
-                            positions[:, 0:1]
-                        ),  # Dummy extra fifth channel
-                    ],
-                    dim=1,
-                )
+
+                if ap_enable and emb.shape[0] > 4 and 0.0 < ap_ratio < 1.0:
+                    # AgilePruner: select K of N visual tokens by attention rank
+                    # then prune similar neighbours. The retained K tokens carry
+                    # their ORIGINAL (h, w) positions (sliced from `positions`).
+                    # Set the routing flag (channel 4) to 1 so that
+                    # recompute_mrope_positions enters the sparse-MRoPE branch.
+                    from vllm.model_executor.models.agilepruner import (
+                        agilepruner_select,
+                        compute_l2_norm_score,
+                    )
+                    score = compute_l2_norm_score(emb)
+                    kept = agilepruner_select(
+                        embeds=emb,
+                        score=score,
+                        ratio=ap_ratio,
+                        tau_max=ap_tau_max,
+                        erank_avg=ap_erank_avg,
+                    )
+                    emb = emb[kept]
+                    positions = positions[kept]
+                    # Channel 4 = 1 (routing flag, mislabelled "is_video" in
+                    # upstream — see vllm-patches/README.md for rationale).
+                    fifth = torch.ones_like(positions[:, 0:1])
+                else:
+                    # Stock path (no AgilePruner): channel 4 = 0 (dummy).
+                    fifth = torch.zeros_like(positions[:, 0:1])
+
+                positions = torch.cat([positions, fifth], dim=1)
                 emb = torch.cat([emb, positions], dim=1)
                 image_embeds_out.append(emb)
             image_embeds_split = tuple(image_embeds_out)
