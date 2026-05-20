@@ -2163,6 +2163,7 @@ class Qwen3VLForConditionalGeneration(
         if ap_enable:
             from vllm.model_executor.models.agilepruner import (
                 agilepruner_select,
+                append_mrope_position_channels,
                 compute_erank,
                 compute_l2_norm_score,
             )
@@ -2192,6 +2193,20 @@ class Qwen3VLForConditionalGeneration(
                     erank_avg=ap_erank_avg,
                 )
                 pruned = seg[kept]
+                # Attach 5-channel MRoPE metadata so that vLLM's
+                # recompute_mrope_positions (sparse-MRoPE branch) can assign
+                # correct (t, h, w) positions to the K retained tokens.
+                # llm_grid_h / llm_grid_w are the POST-MERGER grid dims.
+                _gthw_i = grid_thw[i]
+                _merge = self.visual.spatial_merge_size
+                _llm_grid_h = int(_gthw_i[1].item()) // _merge
+                _llm_grid_w = int(_gthw_i[2].item()) // _merge
+                pruned = append_mrope_position_channels(
+                    embeds=pruned,
+                    kept_indices=kept,
+                    grid_h=_llm_grid_h,
+                    grid_w=_llm_grid_w,
+                )
                 new_segments.append(pruned)
                 new_sizes.append(pruned.shape[0])
                 if logger.isEnabledFor(logging.DEBUG):
