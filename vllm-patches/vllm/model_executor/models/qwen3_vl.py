@@ -2683,6 +2683,15 @@ class Qwen3VLForConditionalGeneration(
                     full_grid = np.indices((1, llm_grid_h, llm_grid_w)).reshape(3, -1)
                     grid_indices = full_grid[:, :remainder]
                     llm_pos_ids_list.append(grid_indices + text_len + st_idx)
+            elif actual_num_tokens < expected_tokens_per_frame:
+                # AgilePruner pruned this image: only K positions exist in the
+                # prompt. Phase-1 positions emitted here are placeholders that
+                # Phase-2 (recompute_mrope_positions) will OVERWRITE using the
+                # 5-channel kept (h, w) metadata. We just need to emit the
+                # correct COUNT (K) — values don't matter.
+                full_grid = np.indices((1, llm_grid_h, llm_grid_w)).reshape(3, -1)
+                grid_indices = full_grid[:, :actual_num_tokens]
+                llm_pos_ids_list.append(grid_indices + text_len + st_idx)
             else:
                 # Normal case: frame has exactly the expected tokens (after actual EVS
                 # pruning).
