@@ -2570,7 +2570,12 @@ class Qwen3VLForConditionalGeneration(
                 assert t == 1, f"Image must have 1 frame, got {t}"
                 llm_grid_h = h // spatial_merge_size
                 llm_grid_w = w // spatial_merge_size
-                yield offset, llm_grid_h, llm_grid_w, llm_grid_h * llm_grid_w
+                # AgilePruner may have reduced the placeholder length to K < grid product.
+                # Yield the ACTUAL placeholder count so downstream MRoPE math
+                # (text_len = offset_next - st) stays consistent with the
+                # prompt rather than assuming a full grid.
+                actual_num_tokens = mm_feature.mm_position.length
+                yield offset, llm_grid_h, llm_grid_w, actual_num_tokens
             elif mm_feature.modality == "video":
                 t, h, w = mm_feature.data["video_grid_thw"].data.tolist()
                 llm_grid_h = h // spatial_merge_size
