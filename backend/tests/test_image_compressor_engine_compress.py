@@ -69,9 +69,14 @@ async def test_T5B7_compress_with_images(tmp_path: Path) -> None:
     assert len(results) == 1
 
     result = results[0]
-    # Router said no-pixels → both image turns get `[Past image #1: ...]` inserts.
+    # Router said no-pixels (keep_idx=None). With selective rewrite enabled,
+    # ONLY the latest image turn (msg 2) gets `[Past image #N: ...]` caption
+    # text. Older image turns (msg 0) silently strip their images WITHOUT
+    # adding caption text — this keeps the model focused on the most recent
+    # image context.
     text_0 = result.messages[0]["content"][-1]["text"]
-    assert "[Past image #1: Caption for image one.]" in text_0
+    assert "Past image" not in text_0  # silently stripped, no caption trace
+    assert text_0 == "first turn"      # original text preserved verbatim
     text_2 = result.messages[2]["content"][-1]["text"]
     assert "[Past image #1: Caption for image two.]" in text_2
     # Last user turn untouched (no images).

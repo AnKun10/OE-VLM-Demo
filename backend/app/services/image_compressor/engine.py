@@ -213,8 +213,20 @@ class ImageCompressorEngine:
 
         url_list = list(iter_image_parts(messages))
         if not url_list:
+            # Fast path: no images anywhere. Don't emit a status event — the
+            # work is trivial and a transient status confuses the UI.
             yield CompressionResult(messages=messages, thinking_md="")
             return
+
+        # Early UX feedback: only emit once we know there's actual work to
+        # do (hashing + possibly captioning + routing), so the user sees
+        # "something is happening" before the multi-second compressor pass.
+        yield StatusEvent(message="🔍 Đang phân tích tin nhắn...")
+
+        # Compute once and reuse: the latest USER turn that carries images.
+        # Used both for routing and for selective rewriting (silent strip of
+        # older image turns when the router decides to drop pixels).
+        latest_idx = find_latest_image_turn(messages)
 
         # Hash each image (fail-soft).
         scanned: list[Scanned] = []
@@ -257,7 +269,6 @@ class ImageCompressorEngine:
 
         # For the router path, finish deciding keep_idx now.
         if last_msg and not has_images(last_msg):
-            latest_idx = find_latest_image_turn(messages)
             if latest_idx is None:
                 # No usable image turn → pure-text history; nothing to compress.
                 yield CompressionResult(messages=messages, thinking_md="")
@@ -290,7 +301,15 @@ class ImageCompressorEngine:
                 for (mi, _, _, _, raw) in scanned if mi != keep_idx
             )
 
-        new_messages = rewrite_messages(messages, keep_idx, captions_by_url)
+        # When the router drops images, keep only the LATEST image turn's
+        # captions; older image turns silently strip their images without
+        # leaving caption text. This keeps the model focused on the current
+        # image context instead of getting biased by older, more descriptive
+        # captions from earlier in the conversation.
+        new_messages = rewrite_messages(
+            messages, keep_idx, captions_by_url,
+            latest_image_turn_idx=(latest_idx if keep_idx is None else None),
+        )
 
         captions_used = [
             (h[:8], captions_by_url.get(url, "(no caption)"))

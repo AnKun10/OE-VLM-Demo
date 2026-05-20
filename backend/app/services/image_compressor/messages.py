@@ -4,9 +4,20 @@ from __future__ import annotations
 import base64
 import copy
 import hashlib
+import re
 from typing import Iterator, Optional
 
 import httpx
+
+
+# Matches the <details>...</details> block emitted by
+# ImageCompressorEngine._build_thinking_log. The match is anchored on the
+# summary line so we don't strip <details> blocks that came from the LLM's
+# own output (which would not start with the 🧠 brain emoji + label).
+_THINKING_MD_RE = re.compile(
+    r"<details>\s*<summary>🧠 Image compressor reasoning[\s\S]*?</details>\s*",
+    flags=re.MULTILINE,
+)
 
 
 def has_images(msg: dict) -> bool:
@@ -94,6 +105,7 @@ def rewrite_messages(
     msgs: list[dict],
     keep_idx: Optional[int],
     captions_by_url: dict[str, str],
+    latest_image_turn_idx: Optional[int] = None,
 ) -> list[dict]:
     """Deep-copy `msgs`; strip `image_url` parts at every turn except `keep_idx`,
     and append `[Past image #N: <caption>]` text where they were stripped.
@@ -101,6 +113,16 @@ def rewrite_messages(
     Per-message numbering: each message's stripped images get #1, #2, ...
     starting from 1 again -- so the model can correlate captions to positions
     inside the same turn.
+
+    `latest_image_turn_idx`: when `keep_idx is None` (router dropped all
+    pixels) AND this is set, OLDER image turns silently strip their images
+    WITHOUT appending captions. The latest image turn still gets its
+    captions appended. This keeps the model focused on the most recent
+    image context instead of getting biased by older, longer captions.
+
+    If an older image turn would become empty (had only images, no text)
+    after a silent strip, a "[ảnh trước đó]" placeholder text is inserted
+    so downstream multimodal handling doesn't choke on empty content.
     """
     out = copy.deepcopy(msgs)
     for i, msg in enumerate(out):
@@ -109,12 +131,22 @@ def rewrite_messages(
             continue
         if i == keep_idx:
             continue
+
+        silent_strip = (
+            keep_idx is None
+            and latest_image_turn_idx is not None
+            and i < latest_image_turn_idx
+        )
+
         new_parts: list[dict] = []
         stripped_captions: list[str] = []
         img_n = 0
         for part in content:
             if part.get("type") == "image_url":
                 img_n += 1
+                if silent_strip:
+                    # Drop the image without leaving a caption trace.
+                    continue
                 url = part.get("image_url", {}).get("url", "")
                 cap = captions_by_url.get(url) or "(no caption)"
                 stripped_captions.append(f"[Past image #{img_n}: {cap}]")
@@ -128,5 +160,49 @@ def rewrite_messages(
                 )
             else:
                 new_parts.append({"type": "text", "text": extra_text})
+        elif silent_strip and not new_parts and img_n > 0:
+            # Older image-only message would become empty after silent
+            # strip. Insert a marker so downstream code doesn't fail on
+            # `content: []`.
+            new_parts.append({"type": "text", "text": "[ảnh trước đó]"})
         msg["content"] = new_parts
+    return out
+
+
+def strip_thinking_md(text: str) -> str:
+    """Remove `<details>...</details>` blocks emitted by the image
+    compressor's `_build_thinking_log` from a string.
+
+    These blocks are UI-only metadata streamed to the frontend; they should
+    NOT be part of the LLM's context window for past assistant turns since
+    they repeat caption text, biasing the model toward older images.
+
+    Targets only the specific summary line ("🧠 Image compressor
+    reasoning") so legitimate `<details>` blocks produced by the LLM are
+    left untouched. Malformed blocks (no closing tag) are also left
+    untouched -- the regex is non-greedy but requires a closing tag.
+    """
+    if not text:
+        return text
+    return _THINKING_MD_RE.sub("", text)
+
+
+def strip_assistant_thinking(msgs: list[dict]) -> list[dict]:
+    """Return a copy of `msgs` with every assistant message's string
+    content run through `strip_thinking_md`. Non-string assistant content
+    (list of parts) and other roles are left untouched.
+
+    Use at the boundary between the image compressor and the final chat
+    LLM call so past turns' thinking_md blocks don't reach the model.
+    """
+    out: list[dict] = []
+    for msg in msgs:
+        if msg.get("role") == "assistant":
+            content = msg.get("content")
+            if isinstance(content, str):
+                stripped = strip_thinking_md(content)
+                if stripped != content:
+                    out.append({**msg, "content": stripped})
+                    continue
+        out.append(msg)
     return out

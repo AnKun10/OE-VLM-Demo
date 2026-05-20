@@ -162,6 +162,17 @@ async def chat_stream(request: Request, body: ChatStreamRequest):
         # (or there's no compressor at all), enforce vLLM's hard limit of 4.
         openai_messages = enforce_image_cap(openai_messages, max_images=4)
 
+        # Strip the compressor's <details><summary>🧠 Image compressor
+        # reasoning...</summary>...</details> blocks from PAST assistant
+        # messages. Those blocks are UI-only metadata streamed to the
+        # browser; if they remain in the LLM's context window they repeat
+        # caption text across turns and bias the model toward whichever
+        # image was captioned most prominently (typically the oldest one).
+        from app.services.image_compressor.messages import (
+            strip_assistant_thinking,
+        )
+        openai_messages = strip_assistant_thinking(openai_messages)
+
         try:
             first_emitted = False
             async for delta in manager.stream(body.model_id, openai_messages):

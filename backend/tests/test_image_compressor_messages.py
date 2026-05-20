@@ -13,6 +13,8 @@ from app.services.image_compressor.messages import (
     hash_image_url,
     iter_image_parts,
     rewrite_messages,
+    strip_assistant_thinking,
+    strip_thinking_md,
     text_of,
 )
 
@@ -166,6 +168,222 @@ async def test_T5B4_hash_bad_scheme() -> None:
 async def test_T5B4_hash_empty_data_url() -> None:
     with pytest.raises(ValueError):
         await hash_image_url("data:image/png;base64,", fetch_base="http://x")
+
+
+# ---- selective rewrite (latest_image_turn_idx) -------------------------------
+
+def test_rewrite_selective_silent_strips_older_image_turns() -> None:
+    """When keep_idx=None AND latest_image_turn_idx is set, older image turns
+    silently lose their images; latest image turn still gets captions."""
+    msgs = [
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "uA"}},
+            {"type": "text", "text": "describe this"},
+        ]},
+        {"role": "assistant", "content": "it is a mushroom"},
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "uB"}},
+            {"type": "image_url", "image_url": {"url": "uC"}},
+            {"type": "text", "text": "describe these"},
+        ]},
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "con chó hình dáng như nào?"},
+    ]
+    captions = {"uA": "mushroom caption", "uB": "hair", "uC": "hands"}
+
+    out = rewrite_messages(
+        msgs, keep_idx=None, captions_by_url=captions,
+        latest_image_turn_idx=2,
+    )
+
+    # Older image turn (msg 0): image stripped silently, text preserved,
+    # NO caption appended.
+    assert out[0]["content"] == [
+        {"type": "text", "text": "describe this"},
+    ]
+    # Assistant unchanged.
+    assert out[1]["content"] == "it is a mushroom"
+    # Latest image turn (msg 2): images stripped, captions appended.
+    assert out[2]["content"] == [
+        {"type": "text", "text": "describe these\n[Past image #1: hair]\n[Past image #2: hands]"},
+    ]
+    # Text-only msgs untouched.
+    assert out[3]["content"] == "ok"
+    assert out[4]["content"] == "con chó hình dáng như nào?"
+
+
+def test_rewrite_selective_image_only_older_turn_gets_placeholder() -> None:
+    """An older image-only turn (no text) would become empty after silent
+    strip; we insert a placeholder so downstream doesn't see content=[]."""
+    msgs = [
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "uA"}},
+        ]},
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "uB"}},
+            {"type": "text", "text": "ask"},
+        ]},
+    ]
+    out = rewrite_messages(
+        msgs, keep_idx=None, captions_by_url={"uA": "A", "uB": "B"},
+        latest_image_turn_idx=1,
+    )
+    assert out[0]["content"] == [
+        {"type": "text", "text": "[ảnh trước đó]"},
+    ]
+    assert out[1]["content"] == [
+        {"type": "text", "text": "ask\n[Past image #1: B]"},
+    ]
+
+
+def test_rewrite_selective_no_op_when_keep_idx_set() -> None:
+    """When keep_idx is set (router said keep, or kept_new_upload),
+    latest_image_turn_idx must be ignored — existing behavior preserved."""
+    msgs = [
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "uA"}},
+            {"type": "text", "text": "first"},
+        ]},
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "uB"}},
+            {"type": "text", "text": "second"},
+        ]},
+    ]
+    out = rewrite_messages(
+        msgs, keep_idx=1, captions_by_url={"uA": "A", "uB": "B"},
+        latest_image_turn_idx=1,
+    )
+    # Msg 0 gets caption (NOT silently stripped); msg 1 untouched.
+    assert out[0]["content"] == [
+        {"type": "text", "text": "first\n[Past image #1: A]"},
+    ]
+    assert out[1]["content"] == msgs[1]["content"]
+
+
+def test_rewrite_selective_no_op_when_latest_idx_none() -> None:
+    """keep_idx=None and latest_image_turn_idx=None → all images become
+    captions in their own turns (backwards-compat)."""
+    msgs = [
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "uA"}},
+            {"type": "text", "text": "first"},
+        ]},
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "uB"}},
+            {"type": "text", "text": "second"},
+        ]},
+    ]
+    out = rewrite_messages(
+        msgs, keep_idx=None, captions_by_url={"uA": "A", "uB": "B"},
+        latest_image_turn_idx=None,
+    )
+    assert out[0]["content"] == [
+        {"type": "text", "text": "first\n[Past image #1: A]"},
+    ]
+    assert out[1]["content"] == [
+        {"type": "text", "text": "second\n[Past image #1: B]"},
+    ]
+
+
+# ---- strip_thinking_md -------------------------------------------------------
+
+def test_strip_thinking_md_removes_compressor_block() -> None:
+    text = (
+        "<details>\n"
+        "<summary>🧠 Image compressor reasoning (4 ảnh, 0 caption mới, drop)</summary>\n"
+        "\n"
+        "**Step 1 — Image scan**\n"
+        "- some content\n"
+        "</details>\n\n"
+        "Actual reply goes here."
+    )
+    out = strip_thinking_md(text)
+    assert out.strip() == "Actual reply goes here."
+    assert "🧠" not in out
+    assert "<details>" not in out
+
+
+def test_strip_thinking_md_handles_multiple_blocks() -> None:
+    text = (
+        "<details><summary>🧠 Image compressor reasoning (1 ảnh, kept)</summary>"
+        "first thinking</details>\n"
+        "reply 1\n"
+        "<details><summary>🧠 Image compressor reasoning (2 ảnh, drop)</summary>"
+        "second thinking</details>\n"
+        "reply 2"
+    )
+    out = strip_thinking_md(text)
+    assert "Image compressor" not in out
+    assert "reply 1" in out
+    assert "reply 2" in out
+
+
+def test_strip_thinking_md_leaves_unrelated_details_alone() -> None:
+    """Only the compressor's <details>...🧠 Image compressor...</details>
+    is stripped. Other <details> blocks (e.g. user-written FAQ) survive."""
+    text = (
+        "<details><summary>User FAQ</summary>some legit content</details>\n"
+        "reply"
+    )
+    out = strip_thinking_md(text)
+    assert out == text
+
+
+def test_strip_thinking_md_leaves_malformed_blocks() -> None:
+    """Block without closing tag — don't crash, return as-is."""
+    text = "<details><summary>🧠 Image compressor reasoning (broken)\nno close"
+    out = strip_thinking_md(text)
+    assert out == text
+
+
+def test_strip_thinking_md_empty_input() -> None:
+    assert strip_thinking_md("") == ""
+    assert strip_thinking_md("no details here") == "no details here"
+
+
+# ---- strip_assistant_thinking ------------------------------------------------
+
+def test_strip_assistant_thinking_only_touches_assistant_strings() -> None:
+    msgs = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": (
+            "<details><summary>🧠 Image compressor reasoning (x)</summary>"
+            "stuff</details>\nreal reply"
+        )},
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "u"}},
+            {"type": "text", "text": "see this"},
+        ]},
+        {"role": "assistant", "content": "plain reply, no thinking_md"},
+        {"role": "system", "content": "<details><summary>🧠 Image compressor reasoning (x)</summary>stuff</details>"},
+    ]
+    out = strip_assistant_thinking(msgs)
+    # User message preserved verbatim.
+    assert out[0] == msgs[0]
+    # Assistant with thinking_md: stripped.
+    assert out[1]["role"] == "assistant"
+    assert "<details>" not in out[1]["content"]
+    assert "real reply" in out[1]["content"]
+    # User with list content preserved verbatim.
+    assert out[2] == msgs[2]
+    # Assistant without thinking_md untouched.
+    assert out[3] == msgs[3]
+    # System role NOT touched (not assistant).
+    assert out[4] == msgs[4]
+
+
+def test_strip_assistant_thinking_no_mutation() -> None:
+    msgs = [
+        {"role": "assistant", "content": (
+            "<details><summary>🧠 Image compressor reasoning</summary>"
+            "x</details>\nreply"
+        )},
+    ]
+    snapshot = msgs[0]["content"]
+    out = strip_assistant_thinking(msgs)
+    # Input must not be mutated; only the COPY in `out` is stripped.
+    assert msgs[0]["content"] == snapshot
+    assert out[0]["content"] != snapshot
 
 
 @pytest.mark.asyncio
