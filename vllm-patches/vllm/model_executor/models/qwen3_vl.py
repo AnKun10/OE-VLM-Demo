@@ -2225,6 +2225,11 @@ class Qwen3VLForConditionalGeneration(
             image_embeds = torch.cat(new_segments, dim=0) if new_segments else image_embeds
             sizes = new_sizes
 
+        # NOTE: When ap_enable=False OR is_video=True, image_embeds has
+        # the upstream (N, D) shape with NO extra channels.
+        # is_multimodal_pruning_enabled is also False in that case (or driven
+        # by video_pruning_rate), so recompute_mrope_positions is skipped —
+        # no contract violation with the upstream code path.
         return image_embeds.split(sizes)
 
     def _process_video_input(
